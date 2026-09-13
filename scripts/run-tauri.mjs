@@ -13,13 +13,14 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 
 const args = process.argv.slice(2);
 const env = process.platform === "darwin" ? macosBuildEnvironment() : { ...process.env };
-const tauri = process.platform === "win32" ? "tauri.cmd" : "tauri";
-const child = spawn(tauri, args, { env, stdio: "inherit" });
+const tauri = createRequire(import.meta.url).resolve("@tauri-apps/cli/tauri.js");
+const child = spawn(process.execPath, [tauri, ...args], { env, stdio: "inherit" });
 
 child.on("error", (error) => {
   if (error.code === "ENOENT") {
