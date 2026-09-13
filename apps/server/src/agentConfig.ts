@@ -21,6 +21,7 @@ export interface AgentConfig {
   name: string;
   command: string;
   args: string;
+  /** Whether this agent's CLI/TUI can be launched in a terminal. */
   enabled: boolean;
   icon?: string;
   builtIn: boolean;
@@ -32,6 +33,14 @@ export interface AgentConfig {
 /** Bumped whenever a built-in gains or changes its ACP adapter, so registries
  *  saved before that still pick the new default up. See sanitize(). */
 export const RUNTIME_REVISION = AGENT_RUNTIME_REVISION;
+
+const REMOVED_AGENT_IDS = new Set(["charm", "kilocode", "droid"]);
+const GENERATED_AGENT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function customCommand(id: string, value: unknown): string {
+  const command = String(value ?? "").trim();
+  return GENERATED_AGENT_ID.test(id) && command === id ? "" : command;
+}
 
 const BUILTIN_AGENTS: AgentConfig[] = [
   {
@@ -53,6 +62,7 @@ const BUILTIN_AGENTS: AgentConfig[] = [
     runtime: defaultAgentRuntime("codex"),
   },
   { id: "gemini", name: "Gemini", command: "gemini", args: "--yolo", enabled: false, builtIn: true, runtime: defaultAgentRuntime("gemini") },
+  { id: "grok", name: "Grok Build", command: "grok", args: "--always-approve", enabled: false, builtIn: true, runtime: defaultAgentRuntime("grok") },
   { id: "openclaw", name: "OpenClaw", command: "openclaw", args: "", enabled: true, builtIn: true, runtime: defaultAgentRuntime("openclaw") },
   { id: "fastclaw", name: "FastClaw", command: "fastclaw", args: "", enabled: false, builtIn: true, runtime: defaultAgentRuntime("fastclaw") },
   { id: "hermes", name: "Hermes", command: "hermes", args: "", enabled: false, builtIn: true, runtime: defaultAgentRuntime("hermes") },
@@ -65,12 +75,30 @@ const BUILTIN_AGENTS: AgentConfig[] = [
     builtIn: true,
     runtime: defaultAgentRuntime("opencode"),
   },
-  { id: "kilocode", name: "Kilocode", command: "kilo", args: "", enabled: false, builtIn: true, runtime: defaultAgentRuntime("kilocode") },
   { id: "cursor", name: "Cursor", command: "cursor-agent", args: "", enabled: false, builtIn: true, runtime: defaultAgentRuntime("cursor") },
   { id: "kimi", name: "Kimi", command: "kimi", args: "", enabled: false, builtIn: true, runtime: defaultAgentRuntime("kimi") },
-  { id: "droid", name: "Droid", command: "droid", args: "", enabled: false, builtIn: true, runtime: defaultAgentRuntime("droid") },
   { id: "omp", name: "OMP", command: "omp", args: "", enabled: false, builtIn: true, runtime: defaultAgentRuntime("omp") },
 ];
+
+function orderedRegistry(agents: AgentConfig[]): AgentConfig[] {
+  const builtInIds = new Set(BUILTIN_AGENTS.map((agent) => agent.id));
+  const custom = agents.filter((agent) => !agent.builtIn);
+  const savedBuiltIns = new Map(agents.filter((agent) => agent.builtIn).map((agent) => [agent.id, agent]));
+  return [
+    ...custom,
+    ...BUILTIN_AGENTS.map((fallback) => savedBuiltIns.get(fallback.id) ?? fallback),
+  ].filter((agent, index, all) =>
+    (agent.builtIn || !builtInIds.has(agent.id)) && all.findIndex((entry) => entry.id === agent.id) === index
+  );
+}
+
+function isRemovedDefault(input: any): boolean {
+  const id = String(input?.id ?? "").trim();
+  if (!REMOVED_AGENT_IDS.has(id)) return false;
+  // A user-supplied adapter may intentionally reuse a familiar command id.
+  // Only retire the old system preset; explicit custom runtimes remain valid.
+  return input?.runtime?.distribution !== "custom";
+}
 
 function runtime(input: any): AgentRuntimeConfig | undefined {
   if (!input) return undefined;
@@ -94,12 +122,17 @@ function runtime(input: any): AgentRuntimeConfig | undefined {
 function sanitize(input: any, builtIn = false, fallback?: AgentConfig): AgentConfig | null {
   const id = String(input?.id ?? "").trim();
   if (!id) return null;
-  const command = String(input?.command ?? "").trim();
+  const command = builtIn ? String(input?.command ?? "").trim() : customCommand(id, input?.command);
   // A stored `null` means "the user turned conversation support off" — but only
   // once the entry has seen this adapter's defaults. Registries written before a
   // built-in gained its adapter also hold null, and those must be backfilled or
   // the agent would never appear in the chat picker.
   const inherit = inheritsDefaultAgentRuntime(input);
+  const parsedRuntime = input?.runtime === null ? null : runtime(input?.runtime);
+  // Clean up the corresponding placeholder already copied into old custom ACP
+  // configs. Without a real adapter command this runtime is incomplete.
+  const savedRuntime = !builtIn && parsedRuntime?.protocol === "acp" &&
+    !customCommand(id, parsedRuntime.command) ? undefined : parsedRuntime;
   return {
     id,
     name: String(input?.name ?? "").trim() || id,
@@ -108,7 +141,7 @@ function sanitize(input: any, builtIn = false, fallback?: AgentConfig): AgentCon
     enabled: input?.enabled !== false,
     icon: typeof input?.icon === "string" ? input.icon : undefined,
     builtIn,
-    runtime: inherit ? fallback?.runtime : input?.runtime === null ? null : runtime(input?.runtime),
+    runtime: inherit ? fallback?.runtime : savedRuntime,
     runtimeRevision: RUNTIME_REVISION,
   };
 }
@@ -121,12 +154,13 @@ export function listAgentConfigs(): { agents: AgentConfig[]; persisted: boolean 
     if (!Array.isArray(parsed)) throw new Error("invalid agents config");
     const builtIns = new Map(BUILTIN_AGENTS.map((agent) => [agent.id, agent]));
     const agents = parsed
+      .filter((item) => !isRemovedDefault(item))
       .map((item) => {
         const fallback = builtIns.get(String(item?.id ?? ""));
         return sanitize(item, Boolean(fallback), fallback);
       })
       .filter((item): item is AgentConfig => item !== null);
-    return { agents, persisted: true };
+    return { agents: orderedRegistry(agents), persisted: true };
   } catch {
     return { agents: BUILTIN_AGENTS, persisted: false };
   }
@@ -137,13 +171,15 @@ export function saveAgentConfigs(input: unknown): AgentConfig[] {
   const builtIns = new Map(BUILTIN_AGENTS.map((agent) => [agent.id, agent]));
   const agents = input
     .slice(0, 64)
+    .filter((item) => !isRemovedDefault(item))
     .map((item) => {
       const fallback = builtIns.get(String(item?.id ?? ""));
       return sanitize(item, Boolean(fallback), fallback);
     })
     .filter((item): item is AgentConfig => item !== null);
-  setAgentsRaw(JSON.stringify(agents));
-  return agents;
+  const ordered = orderedRegistry(agents);
+  setAgentsRaw(JSON.stringify(ordered));
+  return ordered;
 }
 
 export function findAgentConfig(id: string): AgentConfig | undefined {

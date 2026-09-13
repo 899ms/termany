@@ -24,6 +24,8 @@ test("native ACP probes reject old or broken installations without starting a co
   await fs.writeFile(command, '#!/bin/sh\n[ "$1" = "acp" ] && [ "$2" = "--help" ] || exit 23\nprintf "Usage: agent acp [options]\\n"\n', { mode: 0o755 });
   await checkNativeAcpSupport(agent("cursor"), command, process.env);
   await checkNativeAcpSupport(agent("kimi"), command, process.env);
+  await fs.writeFile(command, '#!/bin/sh\n[ "$1" = "agent" ] && [ "$2" = "stdio" ] && [ "$3" = "--help" ] || exit 23\nprintf "Usage: grok agent stdio [OPTIONS]\\n"\n', { mode: 0o755 });
+  await checkNativeAcpSupport(agent("grok"), command, process.env);
   await fs.writeFile(command, '#!/missing/termany/python\n', { mode: 0o755 });
   await assert.rejects(checkNativeAcpSupport(agent("kimi"), command, process.env), /Check or reinstall/);
   await checkNativeAcpSupport({ ...agent("kimi"), runtime: { ...defaultAgentRuntime("kimi")!, distribution: "custom" } }, command, process.env);

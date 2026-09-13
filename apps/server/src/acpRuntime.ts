@@ -26,6 +26,7 @@ import { splitAgentRuntimeNotices } from "@termany/core";
 import { AcpConfigCompatibility } from "./acpConfigCompatibility.js";
 import { checkNativeAcpSupport } from "./nativeAcp.js";
 import { checkGeminiAuthSupport } from "./geminiAuth.js";
+import { prepareManagedAcpLaunch } from "./managedAcp.js";
 import { stopAgentProcess } from "./agentProcess.js";
 import { loadAgentImages, saveAgentOutputImages, type LoadedAgentImage, type StoredAgentImage } from "./agentImages.js";
 import { FastClawRuntime } from "./fastClawRuntime.js";
@@ -97,6 +98,9 @@ function replacementCount(text: string): number {
 
 /** Keep tool detail blobs bounded — they persist with the conversation. */
 const TOOL_DETAIL_LIMIT = 10_000;
+// A few adapters can ignore session/cancel and leave nextUpdate() blocked.
+// Without a fallback, that pane rejects every later turn as already busy.
+const CANCEL_GRACE_MS = 3_000;
 
 function clipDetail(text: string): string | undefined {
   const trimmed = text.replace(/\s+$/, "");
@@ -177,25 +181,33 @@ class Runtime {
   static async create(paneId: string, agent: AgentConfig, cwd: string): Promise<Runtime> {
     const spec = agent.runtime;
     if (!spec || spec.protocol !== "acp") throw new Error(`${agent.name} has no ACP runtime configured`);
-    if (spec.distribution === "managed") {
-      throw new Error(`The managed ${agent.name} runtime is not installed yet; switch its installation to System or Custom`);
-    }
     if (spec.modelSource === "termany") {
       throw new Error("Termany model routing for ACP runtimes is not available yet; choose Agent-managed models");
     }
 
-    const command = await executablePath(spec.command);
-    // Adapters shell out to node/npx and the agent CLI itself, so they need the
-    // login PATH rather than the bundle's launchd-inherited one — but not the
-    // API keys a shell profile may also export. See agentCredentials.ts.
-    const env = subscriptionEnvironment(await spawnEnvironment(), agent);
+    // ACP runtimes and their agent CLIs need the login PATH rather than the
+    // bundle's launchd-inherited one — but not the API keys a shell profile may
+    // also export. Managed bridges below run on Termany's bundled Node and get
+    // an absolute path to the user's authenticated CLI. See agentCredentials.ts.
+    let env = subscriptionEnvironment(await spawnEnvironment(), agent);
+    let command: string;
+    let args: string[];
+    if (spec.distribution === "managed") {
+      const launch = await prepareManagedAcpLaunch(agent, env, splitArgs(spec.args));
+      command = launch.command;
+      args = launch.args;
+      env = launch.env;
+    } else {
+      command = await executablePath(spec.command);
+      args = splitArgs(spec.args);
+    }
     await checkGeminiAuthSupport(agent, env);
     await checkNativeAcpSupport(agent, command, env);
     const dropped = overriddenCredentials(agent).filter((name) => name in process.env);
     if (dropped.length) {
       console.log(`[termany] ${agent.name}: using its own login, ignoring ${dropped.join(", ")}`);
     }
-    const child = spawn(command, splitArgs(spec.args), {
+    const child = spawn(command, args, {
       cwd,
       env,
       stdio: ["pipe", "pipe", "pipe"],
@@ -256,9 +268,14 @@ class Runtime {
     this.prompting = true;
     this.promptSignal = signal;
     this.emit = emit;
+    let forceClose: ReturnType<typeof setTimeout> | undefined;
     const cancel = () => {
       this.cancelPermissions();
       void this.connection.agent.notify(methods.agent.session.cancel, { sessionId: this.session.sessionId }).catch(() => undefined);
+      forceClose = setTimeout(() => {
+        if (this.prompting && this.promptSignal === signal) this.close();
+      }, CANCEL_GRACE_MS);
+      forceClose.unref?.();
     };
     signal.addEventListener("abort", cancel, { once: true });
     try {
@@ -337,6 +354,7 @@ class Runtime {
       for (const id of unfinishedToolIds) emit({ type: "tool", id, status: "completed" });
       emit({ type: "done", sessionId: this.session.sessionId });
     } finally {
+      if (forceClose) clearTimeout(forceClose);
       signal.removeEventListener("abort", cancel);
       this.emit = null;
       this.promptSignal = null;
@@ -459,6 +477,7 @@ class Runtime {
   }
 
   close(): void {
+    if (runtimes.get(this.paneId) === this) runtimes.delete(this.paneId);
     this.cancelPermissions();
     this.session.dispose();
     this.connection.close();
@@ -545,7 +564,7 @@ export interface AcpRuntimeTarget {
  */
 async function acquire(input: AcpRuntimeTarget): Promise<RuntimeHandle> {
   const agent = findAgentConfig(input.agentId);
-  if (!agent || !agent.enabled) throw new Error("Agent runtime is missing or disabled");
+  if (!agent?.runtime) throw new Error("Agent conversation runtime is missing or disabled");
   let runtime = runtimes.get(input.paneId);
   const configChanged = runtime && JSON.stringify(runtime.agent.runtime) !== JSON.stringify(agent.runtime);
   if (runtime && (runtime.agent.id !== input.agentId || configChanged || (input.cwdExplicit && runtime.cwd !== input.cwd))) {

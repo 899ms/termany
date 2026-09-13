@@ -1,4 +1,6 @@
 import { textInputProps } from "../textInputProps";
+import { isAgentAvailableForBot } from "../agentAvailability";
+import { botNameAfterAgentSelection } from "../agentBotName";
 import {
   PointerEvent as ReactPointerEvent,
   useCallback,
@@ -23,6 +25,7 @@ import { activeAgentConversationTopic, agentConversationTopics, allAgentConversa
 import { unreadAgentMessages } from "../agentPrivateMessages";
 import { useI18n } from "../i18n";
 import { useImeGuard } from "../imeGuard";
+import { fetchConfiguredDefaultModel } from "../modelConfig";
 import { useNativeOccluder } from "../nativeViewOcclusion";
 import { useStore, type AgentConversation } from "../state/store";
 import { AgentPane } from "./AgentPane";
@@ -41,6 +44,7 @@ import {
   FilterIcon,
   GearIcon,
   GroupChatIcon,
+  MarkAllReadIcon,
   MoreIcon,
   PinIcon,
   PinOffIcon,
@@ -140,7 +144,7 @@ export function AgentWorkspace({ workspaceId, visible = true }: { workspaceId: s
   const setConversationPinned = useStore((s) => s.setAgentConversationPinned);
   const organizeConversations = useStore((s) => s.organizeAgentConversations);
   const allAgents = useAgentConfigs();
-  const agents = useMemo(() => allAgents.filter((agent) => agent.enabled), [allAgents]);
+  const agents = allAgents;
   const configuredRuntimes = useMemo(
     () => agents.filter((agent) => agent.runtime),
     [agents]
@@ -155,7 +159,16 @@ export function AgentWorkspace({ workspaceId, visible = true }: { workspaceId: s
   );
   const [composerName, setComposerName] = useState("");
   const [composerRuntime, setComposerRuntime] = useState("");
+  const [runtimeSelectOpen, setRuntimeSelectOpen] = useState(false);
+  const [runtimeSelectIndex, setRuntimeSelectIndex] = useState(0);
+  const [runtimeSelectMenuPosition, setRuntimeSelectMenuPosition] = useState<{
+    left: number;
+    top: number;
+    width: number;
+    maxHeight: number;
+  } | null>(null);
   const [detectedRuntimes, setDetectedRuntimes] = useState<AgentConfig[] | null>(null);
+  const [termanyModel, setTermanyModel] = useState<string | null>(null);
   const [runtimeDetectionFailed, setRuntimeDetectionFailed] = useState(false);
   const [now, setNow] = useState(Date.now);
   const [inboxExpanded, setInboxExpanded] = useState(true);
@@ -224,34 +237,138 @@ export function AgentWorkspace({ workspaceId, visible = true }: { workspaceId: s
     "agent-conversation-delete",
     visible && deleteTarget !== null
   );
+  const runtimeSelectRef = useRef<HTMLDivElement>(null);
+  const runtimeSelectMenuRef = useRef<HTMLDivElement>(null);
+  const composerNameInputRef = useRef<HTMLInputElement>(null);
+  const runtimeSelectId = useId();
   const nameIme = useImeGuard();
   const conversationNameIme = useImeGuard();
   const topicTitleIme = useImeGuard();
   const folderIme = useImeGuard();
 
-  // Termany joins the list without CLI detection, so it stays pickable while
-  // installed agents are being detected. Alphabetize the combined list so
-  // every choice has a predictable position.
+  // Termany needs no CLI, but it is useful only after Chat mode has a valid
+  // default model. Alphabetize the available choices for predictable scanning.
   const runtimeChoices = useMemo(
     () =>
       [
-        { id: TERMANY_RUNTIME_ID, name: TERMANY_RUNTIME_NAME, icon: termanyIcon, hint: undefined as string | undefined, pending: false },
-        ...(detectedRuntimes ?? configuredRuntimes).map((agent) => ({
-          id: agent.id,
-          name: agent.name,
-          icon: agent.icon,
-          hint: agent.detectedPath ?? agentCommand(agent),
-          pending: detectedRuntimes === null,
-        })),
+        ...(termanyModel ? [{
+          id: TERMANY_RUNTIME_ID,
+          name: TERMANY_RUNTIME_NAME,
+          icon: termanyIcon,
+          hint: termanyModel as string | undefined,
+        }] : []),
+        ...(detectedRuntimes ?? [])
+          .filter(isAgentAvailableForBot)
+          .map((agent) => ({
+            id: agent.id,
+            name: agent.name,
+            icon: agent.icon,
+            hint: agent.detectedPath ?? agentCommand(agent),
+          })),
       ].sort((a, b) => a.name.localeCompare(b.name, "en", { sensitivity: "base", numeric: true })),
-    [configuredRuntimes, detectedRuntimes]
+    [detectedRuntimes, termanyModel]
   );
 
+  const composerRuntimeAvailable = runtimeChoices.some((choice) => choice.id === composerRuntime);
+  const composerRuntimeChoice = runtimeChoices.find((choice) => choice.id === composerRuntime);
+  const selectComposerRuntime = (choice: (typeof runtimeChoices)[number]) => {
+    setComposerRuntime(choice.id);
+    setComposerName((current) => botNameAfterAgentSelection(current, choice.name));
+    setRuntimeSelectOpen(false);
+    requestAnimationFrame(() => composerNameInputRef.current?.focus({ preventScroll: true }));
+  };
+
+  useEffect(() => {
+    if (!runtimeSelectOpen) return;
+    const closeOutside = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (!runtimeSelectRef.current?.contains(target) && !runtimeSelectMenuRef.current?.contains(target)) {
+        setRuntimeSelectOpen(false);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      setRuntimeSelectOpen(false);
+    };
+    window.addEventListener("pointerdown", closeOutside);
+    window.addEventListener("keydown", closeOnEscape, true);
+    return () => {
+      window.removeEventListener("pointerdown", closeOutside);
+      window.removeEventListener("keydown", closeOnEscape, true);
+    };
+  }, [runtimeSelectOpen]);
+
+  useEffect(() => {
+    if (!runtimeSelectOpen) {
+      setRuntimeSelectMenuPosition(null);
+      return;
+    }
+    const positionMenu = () => {
+      const rect = runtimeSelectRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const edge = 12;
+      const gap = 6;
+      const desiredHeight = Math.min(304, runtimeChoices.length * 40 + 10);
+      const availableBelow = window.innerHeight - rect.bottom - edge - gap;
+      const availableAbove = rect.top - edge - gap;
+      const openAbove = availableBelow < Math.min(desiredHeight, 160) && availableAbove > availableBelow;
+      const available = openAbove ? availableAbove : availableBelow;
+      const maxHeight = Math.max(80, Math.min(desiredHeight, available));
+      setRuntimeSelectMenuPosition({
+        left: Math.max(edge, Math.min(rect.left, window.innerWidth - rect.width - edge)),
+        top: openAbove ? rect.top - gap - maxHeight : rect.bottom + gap,
+        width: Math.min(rect.width, window.innerWidth - edge * 2),
+        maxHeight,
+      });
+    };
+    positionMenu();
+    window.addEventListener("resize", positionMenu);
+    window.addEventListener("scroll", positionMenu, true);
+    return () => {
+      window.removeEventListener("resize", positionMenu);
+      window.removeEventListener("scroll", positionMenu, true);
+    };
+  }, [runtimeChoices.length, runtimeSelectOpen]);
+
+  useEffect(() => {
+    if (runtimeChoices.length === 0) setRuntimeSelectOpen(false);
+    setRuntimeSelectIndex(Math.max(0, runtimeChoices.findIndex((choice) => choice.id === composerRuntime)));
+  }, [composerRuntime, runtimeChoices]);
+
+  useEffect(() => {
+    if (!runtimeSelectOpen) return;
+    const frame = requestAnimationFrame(() => {
+      document.getElementById(`${runtimeSelectId}-option-${runtimeSelectIndex}`)?.scrollIntoView({ block: "nearest" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [runtimeSelectId, runtimeSelectIndex, runtimeSelectOpen]);
+
+  useEffect(() => {
+    if (dialogStage !== "create") return;
+    let live = true;
+    // Hide first, then opt in only after the server confirms a usable default;
+    // stale state must not offer Chat mode after its model was removed.
+    setTermanyModel(null);
+    void fetchConfiguredDefaultModel()
+      .then((model) => {
+        if (live) setTermanyModel(model);
+      })
+      .catch(() => {
+        if (live) setTermanyModel("");
+      });
+    return () => {
+      live = false;
+    };
+  }, [dialogStage]);
+
   const runtimeSignature = configuredRuntimes
-    .map((agent) => `${agent.id}:${agentCommand(agent)}:${JSON.stringify(agent.runtime)}`)
+    .map((agent) => `${agent.id}:${agent.enabled}:${agentCommand(agent)}:${JSON.stringify(agent.runtime)}`)
     .join("|");
 
   useEffect(() => {
+    if (dialogStage !== "create") return;
     let live = true;
     setDetectedRuntimes(null);
     setRuntimeDetectionFailed(false);
@@ -263,7 +380,7 @@ export function AgentWorkspace({ workspaceId, visible = true }: { workspaceId: s
     }
     void detectAgentConfigs(configuredRuntimes)
       .then((detected) => {
-        if (live) setDetectedRuntimes(detected.filter((agent) => agent.detected));
+        if (live) setDetectedRuntimes(detected);
       })
       .catch(() => {
         if (!live) return;
@@ -273,14 +390,17 @@ export function AgentWorkspace({ workspaceId, visible = true }: { workspaceId: s
     return () => {
       live = false;
     };
-    // Re-detect only when a runtime's identity or executable changes.
+    // Installation happens outside the app, so every visit to the create
+    // screen must refresh rather than trusting the previous detection result.
+    // While the screen is open, re-detect when enablement or runtime identity changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runtimeSignature]);
+  }, [runtimeSignature, dialogStage]);
 
   useEffect(() => {
     setDialogStage(conversations.length === 0 ? "picker" : null);
     setComposerName("");
     setComposerRuntime("");
+    setRuntimeSelectOpen(false);
     setContextMenu(null);
     setFolderMenu(null);
     setTopicMenu(null);
@@ -455,6 +575,13 @@ export function AgentWorkspace({ workspaceId, visible = true }: { workspaceId: s
     setTopicMenu(null);
   }, [active?.id, inspectorOpen]);
   const markRead = useStore((state) => state.markAgentConversationRead);
+  const hasUnreadConversations = conversations.some((conversation) => unreadAgentMessages(conversation) > 0);
+  const markAllRead = () => {
+    conversations.forEach((conversation) => {
+      if (unreadAgentMessages(conversation) > 0) markRead(conversation.id);
+    });
+    setFilterOpen(false);
+  };
   const deleteConversation = useStore((state) => state.deleteAgentConversation);
   useEffect(() => {
     const read = () => {
@@ -526,6 +653,7 @@ export function AgentWorkspace({ workspaceId, visible = true }: { workspaceId: s
   const openCreateDialog = () => {
     setComposerName("");
     setComposerRuntime("");
+    setRuntimeSelectOpen(false);
     setDialogStage("create");
   };
 
@@ -533,6 +661,7 @@ export function AgentWorkspace({ workspaceId, visible = true }: { workspaceId: s
 
   const submitConversation = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!composerRuntimeAvailable) return;
     createConversation(composerRuntime, composerName);
   };
 
@@ -1107,6 +1236,17 @@ export function AgentWorkspace({ workspaceId, visible = true }: { workspaceId: s
                 <span>{option.label}</span>
                 {inboxFilter === option.id && <CheckIcon />}
               </button>)}
+              <div className="agent-filter-divider" role="separator" />
+              <button
+                type="button"
+                role="menuitem"
+                className="agent-filter-action"
+                disabled={!hasUnreadConversations}
+                onClick={markAllRead}
+              >
+                <MarkAllReadIcon />
+                <span>{t("agentWorkspace.markAllRead")}</span>
+              </button>
             </div>}
           </div>
         </div>
@@ -1853,6 +1993,7 @@ export function AgentWorkspace({ workspaceId, visible = true }: { workspaceId: s
                   <input
                     {...textInputProps}
                     {...nameIme.props}
+                    ref={composerNameInputRef}
                     autoFocus
                     value={composerName}
                     placeholder={t("agentWorkspace.newBot")}
@@ -1877,33 +2018,88 @@ export function AgentWorkspace({ workspaceId, visible = true }: { workspaceId: s
                       </button>
                     </span>
                   </legend>
-                  <div className="agent-runtime-list" aria-busy={detectedRuntimes === null}>
-                    {runtimeChoices.map((choice) => {
-                      const selected = composerRuntime === choice.id;
-                      return (
-                        <button
-                          key={choice.id}
-                          type="button"
-                          className={`agent-launcher-option agent-runtime-option ${selected ? "selected" : ""} ${choice.pending ? "detecting" : ""}`}
-                          title={choice.hint}
-                          aria-pressed={selected}
-                          disabled={choice.pending}
-                          onClick={() => setComposerRuntime(choice.id)}
-                        >
-                          <AgentAvatar icon={choice.icon} className="agent-launcher-avatar" />
-                          <span className="agent-launcher-label">{choice.name}</span>
-                          <span className="agent-runtime-check" aria-hidden="true">
-                            {selected && <CheckIcon />}
-                          </span>
-                        </button>
-                      );
-                    })}
-                    {detectedRuntimes?.length === 0 && (
-                      <div className="agent-new-empty">
-                        <span>
-                          {runtimeDetectionFailed ? t("agents.detectFailed") : t("agents.noEnabled")}
-                        </span>
-                      </div>
+                  <div
+                    className="agent-runtime-select"
+                    ref={runtimeSelectRef}
+                    aria-busy={detectedRuntimes === null || termanyModel === null}
+                    title={composerRuntimeChoice?.hint}
+                  >
+                    <button
+                      type="button"
+                      role="combobox"
+                      className={`agent-runtime-select-trigger ${runtimeSelectOpen ? "open" : ""}`}
+                      aria-label={t("agentWorkspace.selectAgent")}
+                      aria-haspopup="listbox"
+                      aria-expanded={runtimeSelectOpen}
+                      aria-controls={`${runtimeSelectId}-listbox`}
+                      aria-activedescendant={runtimeSelectOpen ? `${runtimeSelectId}-option-${runtimeSelectIndex}` : undefined}
+                      disabled={detectedRuntimes === null || termanyModel === null || runtimeChoices.length === 0}
+                      onClick={() => {
+                        const selected = runtimeChoices.findIndex((choice) => choice.id === composerRuntime);
+                        setRuntimeSelectIndex(selected >= 0 ? selected : 0);
+                        setRuntimeSelectOpen((open) => !open);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                          event.preventDefault();
+                          const direction = event.key === "ArrowDown" ? 1 : -1;
+                          if (!runtimeSelectOpen) {
+                            const selected = runtimeChoices.findIndex((choice) => choice.id === composerRuntime);
+                            setRuntimeSelectIndex(selected >= 0 ? selected : direction > 0 ? 0 : runtimeChoices.length - 1);
+                            setRuntimeSelectOpen(true);
+                          } else {
+                            setRuntimeSelectIndex((index) => (index + direction + runtimeChoices.length) % runtimeChoices.length);
+                          }
+                        } else if (event.key === "Enter" && runtimeSelectOpen) {
+                          event.preventDefault();
+                          const choice = runtimeChoices[runtimeSelectIndex];
+                          if (choice) selectComposerRuntime(choice);
+                        }
+                      }}
+                    >
+                      <AgentAvatar icon={composerRuntimeChoice?.icon} className="agent-launcher-avatar" />
+                      <span>{composerRuntimeChoice?.name ?? (
+                        detectedRuntimes === null || termanyModel === null
+                          ? t("agents.detecting")
+                          : runtimeChoices.length === 0
+                            ? runtimeDetectionFailed ? t("agents.detectFailed") : t("agents.noEnabled")
+                            : t("agentWorkspace.selectAgent")
+                      )}</span>
+                      <ChevronIcon dir="down" />
+                    </button>
+                    {runtimeSelectOpen && runtimeSelectMenuPosition && createPortal(
+                      <div
+                        id={`${runtimeSelectId}-listbox`}
+                        ref={runtimeSelectMenuRef}
+                        className="agent-runtime-select-menu"
+                        role="listbox"
+                        style={runtimeSelectMenuPosition}
+                      >
+                        {runtimeChoices.map((choice, index) => {
+                          const selected = choice.id === composerRuntime;
+                          return (
+                            <button
+                              id={`${runtimeSelectId}-option-${index}`}
+                              key={choice.id}
+                              type="button"
+                              role="option"
+                              aria-selected={selected}
+                              className={`agent-runtime-select-option ${index === runtimeSelectIndex ? "active" : ""}`}
+                              title={choice.hint}
+                              onMouseEnter={() => setRuntimeSelectIndex(index)}
+                              onMouseDown={(event) => event.preventDefault()}
+                              onClick={() => selectComposerRuntime(choice)}
+                            >
+                              <AgentAvatar icon={choice.icon} className="agent-launcher-avatar" />
+                              <span>{choice.name}</span>
+                              <span className="agent-runtime-select-check" aria-hidden="true">
+                                {selected && <CheckIcon />}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>,
+                      document.body
                     )}
                   </div>
                 </fieldset>
@@ -1919,7 +2115,7 @@ export function AgentWorkspace({ workspaceId, visible = true }: { workspaceId: s
                 <button
                   type="submit"
                   className="agent-create-submit"
-                  disabled={!composerRuntime || !composerName.trim()}
+                  disabled={!composerRuntimeAvailable || !composerName.trim()}
                 >
                   {t("workspace.create")}
                 </button>

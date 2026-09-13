@@ -470,11 +470,20 @@ function cap(diff: string): GitDiff {
  * and portable.
  */
 async function untrackedDiff(abs: string, relative: string): Promise<GitDiff> {
+  let handle: fs.promises.FileHandle | undefined;
   let buf: Buffer;
+  let fileTruncated = false;
   try {
-    buf = await fs.promises.readFile(abs);
+    handle = await fs.promises.open(abs, "r");
+    const stat = await handle.stat();
+    const head = Buffer.allocUnsafe(Math.min(stat.size, DIFF_CAP + 1));
+    const { bytesRead } = await handle.read(head, 0, head.length, 0);
+    buf = head.subarray(0, Math.min(bytesRead, DIFF_CAP));
+    fileTruncated = stat.size > DIFF_CAP;
   } catch {
     return { diff: "" };
+  } finally {
+    await handle?.close().catch(() => undefined);
   }
   // Same heuristic as /api/fs/read: a NUL byte in the head means "not text".
   if (buf.subarray(0, 8000).includes(0)) return { diff: "", binary: true };
@@ -485,7 +494,8 @@ async function untrackedDiff(abs: string, relative: string): Promise<GitDiff> {
   const body = lines.map((line) => `+${line}`).join("\n");
   const tail = endsWithNewline ? "\n" : "\n\\ No newline at end of file\n";
   const header = `--- /dev/null\n+++ b/${relative}\n@@ -0,0 +1,${lines.length} @@\n`;
-  return cap(header + body + tail);
+  const result = cap(header + body + tail);
+  return fileTruncated && !result.truncated ? { ...result, truncated: true } : result;
 }
 
 /** Files requested together, capped so one pathspec can't grow unbounded. */

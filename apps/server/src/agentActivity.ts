@@ -54,6 +54,7 @@ const BUILTIN_AGENT_COMMANDS: Record<string, string> = {
   codex: "codex",
   cx: "codex",
   gemini: "gemini",
+  grok: "grok",
   openclaw: "openclaw",
   fastclaw: "fastclaw",
   hermes: "hermes",
@@ -97,6 +98,7 @@ function detectedAgent(text: string): string | undefined {
   if (/\bClaude(?:\s+Code)?\b/i.test(text)) return "claude";
   if (/\b(?:OpenAI\s+)?Codex(?:\s+CLI)?\b/i.test(text)) return "codex";
   if (/\bGemini(?:\s+CLI)?\b/i.test(text)) return "gemini";
+  if (/\bGrok Build\b/i.test(text)) return "grok";
   if (/\bOpenClaw\b/i.test(text)) return "openclaw";
   if (/\bOpenCode\b/i.test(text)) return "opencode";
   return undefined;

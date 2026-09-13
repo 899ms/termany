@@ -116,12 +116,14 @@ export function Settings({
   initialAgentId,
   onClose,
   onSectionChange,
+  onInstallAgent,
 }: {
   initialSection?: SettingsSection;
   initialAgentId?: string;
   onClose: () => void;
   /** Reported so the panel can reopen where the user left it. */
   onSectionChange?: (section: SettingsSection) => void;
+  onInstallAgent?: (agentName: string, command: string) => boolean;
 }) {
   const { language, setLanguage, t } = useI18n();
   const theme = useStore((s) => s.theme);
@@ -368,7 +370,13 @@ export function Settings({
             </>
           )}
           {section === "models" && <ModelSettings />}
-          {section === "agents" && <AgentSettings initialAgentId={initialAgentId} />}
+          {section === "agents" && (
+            <AgentSettings
+              initialAgentId={initialAgentId}
+              onInstallAgent={onInstallAgent}
+              onConfigureModels={() => goto("models")}
+            />
+          )}
           {section === "keyboard" && <KeyboardSettings />}
           {section === "general" && (
             <>

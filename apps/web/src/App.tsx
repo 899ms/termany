@@ -21,6 +21,7 @@ import { openNewWindow } from "./state/windows";
 import {
   adjustTerminalFontSize,
   clearSession,
+  queueCommandWhenShellReady,
   repeatFind,
   resetTerminalFontSize,
   scrollSessionToBottom,
@@ -100,6 +101,8 @@ export function App() {
   const htab = useStore(activeHtab);
   const activeWorkspaceId = useStore((state) => state.activeWorkspace);
   const [appTab, setAppTab] = useState<AppTab>(loadAppTab);
+  const appTabRef = useRef(appTab);
+  appTabRef.current = appTab;
   const collapsed = useStore((s) => s.sidebarCollapsed);
   const railCollapsed = useStore((s) => s.railCollapsed);
   const [settingsSection, setSettingsSection] = useState<SettingsSection | null>(null);
@@ -121,6 +124,23 @@ export function App() {
   const gitSession = useStore(focusedCwdSession);
   const userNickname = useStore((state) => state.userProfile.nickname);
   const setUserProfile = useStore((state) => state.setUserProfile);
+
+  const handleAppTabChange = useCallback((next: AppTab) => {
+    setAppTab(next);
+    // The command palette searches Pages resources and exposes pane commands;
+    // do not carry an open palette into the Bots workspace.
+    if (next !== "pages") setSearchOpen(false);
+  }, []);
+
+  const installAgent = useCallback((agentName: string, command: string) => {
+    const paneId = useStore.getState().addPane("terminal", `${agentName} Install`);
+    if (!paneId) return false;
+    queueCommandWhenShellReady(paneId, command);
+    handleAppTabChange("pages");
+    setSettingsSection(null);
+    setSettingsAgentId(null);
+    return true;
+  }, [handleAppTabChange]);
 
   useEffect(() => {
     if (userNickname.trim()) return;
@@ -158,6 +178,12 @@ export function App() {
     window.addEventListener("termany:open-settings", onOpen);
     return () => window.removeEventListener("termany:open-settings", onOpen);
   }, []);
+
+  useEffect(() => {
+    const onOpenPages = () => handleAppTabChange("pages");
+    window.addEventListener("termany:open-pages", onOpenPages);
+    return () => window.removeEventListener("termany:open-pages", onOpenPages);
+  }, [handleAppTabChange]);
 
   // Settings and Search are full-panel overlays, so blanket-hiding every
   // native webview in the workspace while either is open is correct. The
@@ -246,7 +272,11 @@ export function App() {
       openAgentHistory: (s) => s.addPane("history"),
       openAgentUsage: (s) => s.addPane("usage"),
       openSystemMonitor: (s) => s.addPane("monitor"),
-      search: () => setSearchOpen((o) => !o),
+      // Keep the shortcut registered so we still consume the browser's native
+      // Cmd+P action, but only show this Pages-specific palette on Pages.
+      search: () => {
+        if (appTabRef.current === "pages") setSearchOpen((o) => !o);
+      },
       find: () => setFindOpen(true),
       findNext: (s) => {
         const h = activeHtab(s);
@@ -396,7 +426,7 @@ export function App() {
     <div className={`app${isTauri ? " tauri" : ""}`}>
       {isTauri && <WindowControls />}
       {isTauri && <ResizeHandles />}
-      <AppTabRail active={appTab} workspaceId={activeWorkspaceId} onChange={setAppTab} />
+      <AppTabRail active={appTab} workspaceId={activeWorkspaceId} onChange={handleAppTabChange} />
       <WorkspaceSwitcher onOpenSettings={openSettings} />
       {appTab === "pages" && (
         <>
@@ -444,9 +474,10 @@ export function App() {
           onSectionChange={(next) => {
             lastSettingsSection.current = next;
           }}
+          onInstallAgent={installAgent}
         />
       )}
-      {searchOpen && (
+      {appTab === "pages" && searchOpen && (
         <SearchPalette onClose={() => setSearchOpen(false)} onRunAction={runAction} />
       )}
       {gitDiffOpen && <GitDiff session={gitSession} onClose={() => setGitDiffOpen(false)} />}
