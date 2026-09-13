@@ -1,3 +1,4 @@
+import { textInputProps } from "../textInputProps";
 import { PointerEvent as ReactPointerEvent, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { beginDragCursor, createDragGhost, endDragCursor, type DragGhost } from "../dragGhost";
 import { useI18n } from "../i18n";
@@ -14,7 +15,6 @@ import {
   type AgentActivityStatus,
 } from "../terminal/manager";
 import { ChevronIcon, CloseIcon, CollapseAllIcon, PageIcon, PlusIcon } from "./icons";
-import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
 
 const DRAG_MIME = "application/x-termany-node";
 const ACTIVITY_STATUSES = ["working", "done", "error"] as const;
@@ -247,6 +247,7 @@ function TreeItem({
 
         {editing ? (
           <input
+            {...textInputProps}
             {...ime.props}
             className="tree-rename"
             autoFocus
@@ -320,7 +321,7 @@ function TreeItem({
 }
 
 /** Left sidebar: the workspace's node tree. */
-export function TreeSidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
+export function TreeSidebar() {
   const { t } = useI18n();
   const ws = useStore(activeWorkspace);
   const activePage = useStore(activePageId);
@@ -470,7 +471,6 @@ export function TreeSidebar({ onOpenSettings }: { onOpenSettings: () => void }) 
 
   return (
     <div className="sidebar">
-      <WorkspaceSwitcher onOpenSettings={onOpenSettings} />
       {/* Pages whose own panes are still inside an agent TUI, hoisted above the
           tree. Task state is independent and stays in the traffic-light counts. */}
       {activeEntries.length > 0 && (

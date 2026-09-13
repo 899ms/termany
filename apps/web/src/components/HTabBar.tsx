@@ -1,3 +1,4 @@
+import { textInputProps } from "../textInputProps";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { beginDragCursor, createDragGhost, endDragCursor, type DragGhost } from "../dragGhost";
 import { isTauri } from "../env";
@@ -214,6 +215,7 @@ export function HTabBar() {
               })}
               {editing === h.id ? (
                 <input
+                  {...textInputProps}
                   className="htab-rename"
                   autoFocus
                   defaultValue={h.title}

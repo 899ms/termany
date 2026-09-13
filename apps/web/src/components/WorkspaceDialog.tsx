@@ -1,3 +1,4 @@
+import { textInputProps } from "../textInputProps";
 import { useState } from "react";
 import { useI18n } from "../i18n";
 import { useImeGuard } from "../imeGuard";
@@ -46,6 +47,7 @@ export function WorkspaceDialog({
             )}
           </button>
           <input
+            {...textInputProps}
             {...ime.props}
             className="ws-dialog-input"
             autoFocus

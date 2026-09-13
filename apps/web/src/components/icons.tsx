@@ -8,6 +8,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronsDownUp,
+  ChevronsRight,
   ChevronsUpDown,
   ChevronUp,
   Code2,
@@ -26,19 +27,26 @@ import {
   ArrowRight,
   Activity,
   Bot,
+  BookOpen,
   Cable,
   ChartColumn,
   Check,
   Copy,
   FlaskConical,
   Loader2,
+  ListFilter,
+  MessageCircle,
   MessageSquareText,
+  Ellipsis,
   Maximize2,
   Minimize2,
   PanelLeft,
   PanelLeftClose,
   PanelRight,
+  Paperclip,
   Pencil,
+  Pin,
+  PinOff,
   Plus,
   RotateCw,
   Search,
@@ -47,6 +55,9 @@ import {
   Square,
   SquareTerminal,
   Trash2,
+  UserRound,
+  UsersRound,
+  Wrench,
   X,
 } from "lucide-react";
 
@@ -77,6 +88,10 @@ export function PanelRightIcon() {
   return <PanelRight {...base} />;
 }
 
+export function CollapseRightIcon() {
+  return <ChevronsRight {...base} />;
+}
+
 export function ChevronIcon({ dir = "right" }: { dir?: "left" | "right" | "up" | "down" }) {
   const C = { left: ChevronLeft, right: ChevronRight, up: ChevronUp, down: ChevronDown }[dir];
   return <C {...base} />;
@@ -88,6 +103,22 @@ export function CloseIcon() {
 
 export function PlusIcon() {
   return <Plus {...base} />;
+}
+
+export function AttachmentIcon() {
+  return <Paperclip {...base} />;
+}
+
+export function ReadIcon() {
+  return <BookOpen {...base} />;
+}
+
+export function ToolIcon() {
+  return <Wrench {...base} />;
+}
+
+export function GroupChatIcon() {
+  return <UsersRound {...base} />;
 }
 
 /** Diagonal arrows pointing out — enter magnify (fill the tab). */
@@ -108,6 +139,14 @@ export function PageIcon() {
 /** Pencil — edit action. */
 export function EditIcon() {
   return <Pencil {...base} />;
+}
+
+export function PinIcon() {
+  return <Pin {...base} />;
+}
+
+export function PinOffIcon() {
+  return <PinOff {...base} />;
 }
 
 /** Gear — settings. */
@@ -145,6 +184,44 @@ export function AgentIcon() {
 
 export function ChatIcon() {
   return <MessageSquareText {...base} />;
+}
+
+/** Plain conversation bubble — used by inbox filters rather than app navigation. */
+export function ConversationIcon() {
+  return <MessageCircle {...base} />;
+}
+
+/** A single person — distinguishes direct conversations from agent/bot icons. */
+export function DirectChatIcon() {
+  return <UserRound {...base} />;
+}
+
+export function FilterIcon() {
+  return <ListFilter {...base} />;
+}
+
+export function UnreadIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="lucide lucide-message-circle-unread"
+      fill="none"
+      height={base.size}
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={base.strokeWidth}
+      viewBox="0 0 24 24"
+      width={base.size}
+    >
+      <path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719" />
+      <circle cx="18.5" cy="18.5" r="2.5" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+export function MoreIcon() {
+  return <Ellipsis {...base} />;
 }
 
 export function SendIcon() {

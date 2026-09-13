@@ -9,6 +9,7 @@ import "@xterm/xterm/css/xterm.css";
 import { loadAgentConfigs } from "../agents";
 import { apiUrl } from "../api";
 import { writeClipboard } from "../clipboard";
+import { applyTextInputProps } from "../textInputProps";
 import { DemoBackend, demoInteracted, isDemo } from "../demo";
 import { ACTIONS, loadKeybindings, matchChord } from "../keybindings";
 import {
@@ -1826,6 +1827,7 @@ export function attachSession(
   host.appendChild(s.el);
   if (!s.opened) {
     s.term.open(s.el); // el is now in the document — renderer initialises correctly
+    if (s.term.textarea) applyTextInputProps(s.term.textarea);
     // GPU renderer: the default DOM renderer repaints character-by-character and
     // makes echo feel laggy. WebGL must be loaded AFTER open(). If the GPU context
     // is lost (driver reset / tab backgrounded), dispose so xterm falls back to DOM.

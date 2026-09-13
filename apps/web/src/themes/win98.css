@@ -147,8 +147,7 @@ html[data-theme="win98"] .sidebar {
    measurements are really one: the tab strip, the sidebar header that lines up
    with it, and the rail's top inset (which the base stylesheet derives from the
    strip's height by hand, so it has to be restated here). */
-html[data-theme="win98"] .htabbar,
-html[data-theme="win98"] .ws-switcher {
+html[data-theme="win98"] .htabbar {
   height: 28px;
 }
 html[data-theme="win98"] .side-rail {
@@ -334,7 +333,6 @@ html[data-theme="win98"] .bar-btn,
 html[data-theme="win98"] .mini,
 html[data-theme="win98"] .htab-add,
 html[data-theme="win98"] .side-rail-btn,
-html[data-theme="win98"] .ws-icon-btn,
 html[data-theme="win98"] .tree-act,
 html[data-theme="win98"] .find-bar-btn,
 html[data-theme="win98"] .term-scroll-btn,
@@ -350,7 +348,6 @@ html[data-theme="win98"] .mini:hover,
 html[data-theme="win98"] .htab-add:hover,
 html[data-theme="win98"] .side-rail-btn:hover,
 html[data-theme="win98"] .side-rail-btn.active,
-html[data-theme="win98"] .ws-icon-btn:hover,
 html[data-theme="win98"] .tree-act:hover,
 html[data-theme="win98"] .find-bar-btn:hover,
 html[data-theme="win98"] .term-scroll-btn:hover,
@@ -367,7 +364,6 @@ html[data-theme="win98"] .mini:active,
 html[data-theme="win98"] .htab-add:active,
 html[data-theme="win98"] .side-rail-btn:active,
 html[data-theme="win98"] .side-rail-btn.active,
-html[data-theme="win98"] .ws-icon-btn:active,
 html[data-theme="win98"] .web-nav-btn:active {
   box-shadow: var(--w98-down);
 }
@@ -730,7 +726,6 @@ html[data-theme="win98"] .history-tabs {
 
 /* MS Sans Serif shipped in exactly two weights, so the in-between weights the
    app uses for soft emphasis round up to bold. */
-html[data-theme="win98"] .ws-name,
 html[data-theme="win98"] .ws-avatar,
 html[data-theme="win98"] .usage-title,
 html[data-theme="win98"] .usage-section-head,

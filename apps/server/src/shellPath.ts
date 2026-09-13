@@ -76,19 +76,44 @@ export async function spawnEnvironment(): Promise<NodeJS.ProcessEnv> {
 }
 
 /**
+ * An executable script can pass X_OK and still fail with ENOENT when the
+ * interpreter named by its shebang has been removed. This commonly happens to
+ * uv/pipx tools after Homebrew replaces a Python installation.
+ */
+async function isRunnable(path: string): Promise<boolean> {
+  try {
+    await fs.promises.access(path, fs.constants.X_OK);
+    if (IS_WIN) return true;
+
+    const handle = await fs.promises.open(path, "r");
+    try {
+      const buffer = Buffer.alloc(1_024);
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+      const firstLine = buffer.subarray(0, bytesRead).toString("utf8").split(/\r?\n/, 1)[0];
+      if (!firstLine.startsWith("#!")) return true;
+
+      const interpreter = firstLine.slice(2).trim().split(/\s+/, 1)[0];
+      if (!interpreter) return false;
+      await fs.promises.access(interpreter, fs.constants.X_OK);
+      return true;
+    } finally {
+      await handle.close();
+    }
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Absolute path of `command`, resolved the way the user's shell would.
- * Returns undefined when nothing matches.
+ * Returns undefined when nothing matches or a script's shebang interpreter is
+ * missing, since the operating system cannot start that command either.
  */
 export async function resolveExecutable(command: string): Promise<string | undefined> {
   const trimmed = command.trim();
   if (!trimmed) return undefined;
   if (/[\\/]/.test(trimmed)) {
-    try {
-      await fs.promises.access(trimmed, fs.constants.X_OK);
-      return trimmed;
-    } catch {
-      return undefined;
-    }
+    return await isRunnable(trimmed) ? trimmed : undefined;
   }
   if (IS_WIN) {
     try {
@@ -98,5 +123,6 @@ export async function resolveExecutable(command: string): Promise<string | undef
       return undefined;
     }
   }
-  return loginShellValue(`$(command -v -- ${shellQuote(trimmed)} 2>/dev/null)`);
+  const found = await loginShellValue(`$(command -v -- ${shellQuote(trimmed)} 2>/dev/null)`);
+  return found && await isRunnable(found) ? found : undefined;
 }

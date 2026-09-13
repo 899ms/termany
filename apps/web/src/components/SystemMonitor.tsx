@@ -1,3 +1,4 @@
+import { textInputProps } from "../textInputProps";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { apiPath } from "../api";
 import { useI18n } from "../i18n";
@@ -366,6 +367,7 @@ export function SystemMonitor() {
     <div className="sysmon">
       <div className="sysmon-toolbar">
         <input
+          {...textInputProps}
           className="sysmon-search"
           placeholder={t("monitor.search")}
           value={query}

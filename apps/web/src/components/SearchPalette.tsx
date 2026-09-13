@@ -1,3 +1,4 @@
+import { textInputProps } from "../textInputProps";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "../i18n";
 import { useImeGuard } from "../imeGuard";
@@ -280,12 +281,9 @@ export function SearchPalette({
             <SearchIcon />
           </span>
           <input
+            {...textInputProps}
             className="search-input"
             autoFocus
-            autoCorrect="off"
-            autoComplete="off"
-            autoCapitalize="off"
-            spellCheck={false}
             value={query}
             placeholder={t("search.placeholder")}
             onChange={(e) => setQuery(e.target.value)}

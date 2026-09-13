@@ -1,3 +1,4 @@
+import { textInputProps } from "../textInputProps";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { CodeEditor } from "./CodeEditor";
 import { DocxPreview, PptxPreview, XlsxPreview } from "./OfficePreview";
@@ -956,10 +957,10 @@ export function FileTree({
     <>
       <div className="file-tree-head">
         <input
+          {...textInputProps}
           className="file-tree-path file-tree-path-input"
           {...ime.props}
           value={addressDraft}
-          spellCheck={false}
           title={root ?? ""}
           onFocus={() => setAddressFocused(true)}
           onChange={(e) => setAddressDraft(e.target.value)}
