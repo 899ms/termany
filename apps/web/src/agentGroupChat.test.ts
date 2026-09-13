@@ -157,6 +157,30 @@ test("one ambiguous dispatch can choose an ordered multi-member sequence", async
   assert.equal(decisions, 2);
 });
 
+test("the lead member visibly responds before the initial dispatched workers", async () => {
+  const group = { name: "Team", leadMemberId: "A", members: [bot("A"), bot("B"), bot("C")] };
+  const calls: string[] = [];
+  let decisions = 0;
+  await runGroupConversation({ group, user: chatMessage("u", "Organize the team", "user"),
+    signal: new AbortController().signal,
+    decide: async (context) => {
+      decisions++;
+      if (decisions === 1) return { mode: "parallel", memberIds: ["B", "C"], triggerMessageIds: ["u"] };
+      assert.deepEqual(context.completedTurns.map((turn) => turn.memberId), ["A", "B", "C"]);
+      return { mode: "none", memberIds: [], triggerMessageIds: [] };
+    },
+    reply: async (member, _turn, visible) => {
+      calls.push(member.id);
+      if (member.id !== "A") {
+        assert.equal(visible.filter((message) => message.role === "assistant").length, 1);
+      }
+      return [chatMessage(`reply-${member.id}-${calls.length}`, "done")];
+    },
+  });
+  assert.deepEqual(calls, ["A", "B", "C"]);
+  assert.equal(decisions, 2);
+});
+
 test("the coordinator keeps supervising until a user-facing result is complete", async () => {
   const group = { name: "Team", leadMemberId: "A", members: [bot("A"), bot("B")] };
   const calls: string[] = [];
@@ -167,19 +191,21 @@ test("the coordinator keeps supervising until a user-facing result is complete",
       decisions++;
       if (decisions === 1) return { mode: "single", memberIds: ["B"], triggerMessageIds: ["u"] };
       if (decisions === 2) {
-        assert.deepEqual(context.completedTurns.map((turn) => turn.memberId), ["B"]);
+        assert.deepEqual(context.completedTurns.map((turn) => turn.memberId), ["A", "B"]);
         return { mode: "single", memberIds: ["A"], triggerMessageIds: ["research"] };
       }
-      assert.deepEqual(context.completedTurns.map((turn) => turn.memberId), ["B", "A"]);
+      assert.deepEqual(context.completedTurns.map((turn) => turn.memberId), ["A", "B", "A"]);
       return { mode: "none", memberIds: [], triggerMessageIds: [] };
     },
     reply: async (member, _turn, visible) => {
       calls.push(member.id);
-      if (member.id === "A") assert.equal(visible.some((item) => item.id === "research"), true);
+      if (member.id === "A" && calls.filter((id) => id === "A").length > 1) {
+        assert.equal(visible.some((item) => item.id === "research"), true);
+      }
       return [chatMessage(member.id === "B" ? "research" : "final", member.id === "B" ? "findings" : "final answer")];
     },
   });
-  assert.deepEqual(calls, ["B", "A"]);
+  assert.deepEqual(calls, ["A", "B", "A"]);
   assert.equal(decisions, 3);
   assert.equal(result.failed, false);
 });
@@ -220,8 +246,13 @@ test("a failed member is quarantined and its task is reassigned to a healthy mem
   const group = { name: "Team", members: [bot("A"), bot("B"), bot("C")] };
   const calls: string[] = [];
   const turns: { memberId: string; triggers: string[] }[] = [];
+  let decisions = 0;
   const result = await runGroupConversation({ group, user: chatMessage("u", "@A do it", "user"),
-    signal: new AbortController().signal, decide: async () => assert.fail("explicit routing must bypass dispatch"),
+    signal: new AbortController().signal, decide: async (context) => {
+      decisions++;
+      assert.deepEqual(context.unavailableMemberIds, ["A"]);
+      return { mode: "none", memberIds: [], triggerMessageIds: [] };
+    },
     reply: async (member, turn) => {
       calls.push(member.id);
       turns.push({ memberId: member.id, triggers: turn.triggerMessageIds });
@@ -233,7 +264,26 @@ test("a failed member is quarantined and its task is reassigned to a healthy mem
     { memberId: "A", triggers: ["u"] },
     { memberId: "B", triggers: ["u"] },
   ]);
+  assert.equal(decisions, 1);
   assert.deepEqual(result, { limited: false, failed: false, unavailableMemberIds: ["A"] });
+});
+
+test("a healthy lead publicly monitors and reorganizes after a member failure", async () => {
+  const group = { name: "Team", leadMemberId: "A", members: [bot("B"), bot("C"), bot("A")] };
+  const calls: { memberId: string; unavailable: string[] }[] = [];
+  await runGroupConversation({ group, user: chatMessage("u", "@B do it", "user"),
+    signal: new AbortController().signal,
+    decide: async () => assert.fail("a healthy lead should handle recovery without hidden dispatch"),
+    reply: async (member, turn) => {
+      calls.push({ memberId: member.id, unavailable: turn.unavailableMemberIds ?? [] });
+      return member.id === "B" ? { messages: [], failed: true } : [chatMessage(`r-${member.id}`, "done")];
+    },
+  });
+  assert.deepEqual(calls, [
+    { memberId: "B", unavailable: [] },
+    { memberId: "C", unavailable: ["B"] },
+    { memberId: "A", unavailable: ["B"] },
+  ]);
 });
 
 test("parallel failures are recovered sequentially without retrying quarantined members", async () => {
@@ -241,8 +291,13 @@ test("parallel failures are recovered sequentially without retrying quarantined 
   const calls: string[] = [];
   let activeRecoveries = 0;
   let maxActiveRecoveries = 0;
+  let decisions = 0;
   const result = await runGroupConversation({ group, user: chatMessage("u", "@all do it", "user"),
-    signal: new AbortController().signal, decide: async () => assert.fail("@all must bypass dispatch"),
+    signal: new AbortController().signal, decide: async (context) => {
+      decisions++;
+      assert.deepEqual(context.unavailableMemberIds, ["A", "B"]);
+      return { mode: "none", memberIds: [], triggerMessageIds: [] };
+    },
     reply: async (member, _turn, visible) => {
       calls.push(member.id);
       if (calls.length <= 3) {
@@ -258,6 +313,7 @@ test("parallel failures are recovered sequentially without retrying quarantined 
   });
   assert.deepEqual(calls, ["A", "B", "C", "C", "C"]);
   assert.equal(maxActiveRecoveries, 1);
+  assert.equal(decisions, 1);
   assert.deepEqual(result.unavailableMemberIds, ["A", "B"]);
   assert.equal(result.failed, false);
 });

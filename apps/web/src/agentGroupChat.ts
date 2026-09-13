@@ -19,6 +19,7 @@ export function groupLeadMember(group: AgentGroup): AgentConversation | undefine
 export interface GroupTurn {
   round: number;
   triggerMessageIds: string[];
+  unavailableMemberIds?: string[];
 }
 
 export interface GroupReply {
@@ -217,6 +218,8 @@ export async function runGroupConversation({ group, user, history = [], privateM
     limited, failed, unavailableMemberIds: [...unavailable],
   });
   const unavailable = new Set<string>();
+  const monitoredUnavailable = new Set<string>();
+  const lead = groupLeadMember(group);
   const envelope = ({ id, sender, recipient, createdAt }: AgentPrivateMessage) => ({ id, sender, recipient, createdAt });
   const context: GroupDecisionContext = {
     messages: [...history.filter((message) => message.id !== user.id), user],
@@ -229,16 +232,32 @@ export async function runGroupConversation({ group, user, history = [], privateM
     context.unavailableMemberIds = [...unavailable];
   };
   let decision = explicitGroupDecision(user.content, group, user.id);
+  let deferredInitialDecision: (Omit<GroupDecision, "mode"> & {
+    mode: Exclude<GroupDecision["mode"], "none">;
+  }) | undefined;
   const supervised = !decision;
   if (!decision) {
     const raw = await decide({ ...context, messages: [...context.messages],
       privateDeliveries: [...context.privateDeliveries], completedTurns: [] });
     if (signal.aborted) return finish();
     decision = validateGroupDecision(raw, group, context);
+    // The controller is intentionally hidden, but an unaddressed group message
+    // should still feel owned by the visible lead. Put the lead in front of the
+    // controller's initial route while preserving any later lead turn the
+    // controller selected for consolidation.
+    if (decision.mode !== "none" && lead && decision.memberIds[0] !== lead.id) {
+      deferredInitialDecision = { ...decision, mode: decision.mode };
+      decision = {
+        mode: "single",
+        memberIds: [lead.id],
+        triggerMessageIds: decision.triggerMessageIds,
+      };
+    }
   }
   if (decision.mode === "none") return finish();
 
-  let pending = decision.memberIds.map((memberId) => ({ memberId, triggerMessageIds: decision!.triggerMessageIds }));
+  let pending: { memberId: string; triggerMessageIds: string[]; unavailableMemberIds?: string[] }[] =
+    decision.memberIds.map((memberId) => ({ memberId, triggerMessageIds: decision!.triggerMessageIds }));
   let mode = decision.mode;
   while (pending.length && !signal.aborted) {
     const remaining = maxTurns - context.completedTurns.length;
@@ -249,7 +268,9 @@ export async function runGroupConversation({ group, user, history = [], privateM
     const batchMessages: AgentMessage[] = [];
     const batchDeliveries: AgentPrivateMessage[] = [];
     const execute = async (item: typeof batch[number], index: number, visible: AgentMessage[], member: AgentConversation) => {
-      const turn = { round: context.completedTurns.length + index + 1, triggerMessageIds: item.triggerMessageIds };
+      const turn: GroupTurn = { round: context.completedTurns.length + index + 1,
+        triggerMessageIds: item.triggerMessageIds,
+        ...(item.unavailableMemberIds?.length ? { unavailableMemberIds: item.unavailableMemberIds } : {}) };
       const rawOutcome = await reply(member, turn, visible);
       const outcome = Array.isArray(rawOutcome) ? { messages: rawOutcome } : rawOutcome;
       return { member, turn, outcome };
@@ -262,6 +283,9 @@ export async function runGroupConversation({ group, user, history = [], privateM
       context.privateDeliveries.push(...deliveries.map(envelope));
       context.completedTurns.push({ ...turn, memberId: member.id,
         messageIds: replies.map((message) => message.id), privateMessageIds: deliveries.map((message) => message.id) });
+      if (member.id === lead?.id && turn.unavailableMemberIds?.length) {
+        turn.unavailableMemberIds.forEach((memberId) => monitoredUnavailable.add(memberId));
+      }
       batchMessages.push(...replies);
       batchDeliveries.push(...deliveries);
       return true;
@@ -284,7 +308,7 @@ export async function runGroupConversation({ group, user, history = [], privateM
         const member = candidatesFor(item.memberId, attempted)[0];
         if (!member) return result;
         attempted.add(member.id);
-        result = await execute(item, index, visible, member);
+        result = await execute({ ...item, unavailableMemberIds: [...unavailable] }, index, visible, member);
         if (!result.outcome.failed) return result;
         quarantine(member.id);
       }
@@ -338,13 +362,44 @@ export async function runGroupConversation({ group, user, history = [], privateM
     }
     if (truncated) return finish(true, false, unavailable);
     pending = handoffsFrom(batchMessages, batchDeliveries, group, scheduled);
-    if (!pending.length && supervised) {
+    if (deferredInitialDecision) {
+      const deferred = deferredInitialDecision;
+      deferredInitialDecision = undefined;
+      const plannedIds = new Set(deferred.memberIds);
+      const handoffByMember = new Map(pending.map((item) => [item.memberId, item.triggerMessageIds]));
+      const additional = pending.filter((item) => !plannedIds.has(item.memberId));
+      pending = deferred.memberIds.map((memberId) => ({
+        memberId,
+        triggerMessageIds: [...new Set([...deferred.triggerMessageIds, ...(handoffByMember.get(memberId) ?? [])])],
+      }));
+      pending.push(...additional);
+      mode = deferred.mode === "single" && additional.length ? "parallel" : deferred.mode;
+      continue;
+    }
+    let failureCoordination: string[] = [];
+    if (!pending.length) {
+      const unmonitored = [...unavailable].filter((memberId) => !monitoredUnavailable.has(memberId));
+      if (unmonitored.length && lead && !unavailable.has(lead.id)) {
+        unmonitored.forEach((memberId) => monitoredUnavailable.add(memberId));
+        pending = [{ memberId: lead.id,
+          triggerMessageIds: [...new Set([user.id, ...batchMessages.map((message) => message.id)])],
+          unavailableMemberIds: unmonitored }];
+        mode = "single";
+        continue;
+      }
+      // A broken lead cannot supervise publicly. Give the isolated controller
+      // one failover-enabled chance to select a healthy recovery owner.
+      failureCoordination = unmonitored;
+      failureCoordination.forEach((memberId) => monitoredUnavailable.add(memberId));
+    }
+    if (!pending.length && (supervised || failureCoordination.length)) {
       const raw = await decide({ ...context, messages: [...context.messages],
         privateDeliveries: [...context.privateDeliveries], completedTurns: [...context.completedTurns] });
       if (signal.aborted) return finish(false, false, unavailable);
       const next = validateGroupDecision(raw, group, context);
       if (next.mode === "none") return finish(false, false, unavailable);
-      pending = next.memberIds.map((memberId) => ({ memberId, triggerMessageIds: next.triggerMessageIds }));
+      pending = next.memberIds.map((memberId) => ({ memberId, triggerMessageIds: next.triggerMessageIds,
+        ...(failureCoordination.length ? { unavailableMemberIds: failureCoordination } : {}) }));
       mode = next.mode;
       continue;
     }
@@ -432,6 +487,7 @@ export function groupConversationPrompt(group: AgentGroup, speaker: AgentConvers
   const recent = sharedGroupMessages(messages, turn?.triggerMessageIds);
   return [
     "You are the current member in a group conversation. Decide how to respond using the group and member profiles, conversation, and triggering messages in turn. The user role is the human participant described by human; address them by human.name instead of a generic label when natural. members lists the Bots and their identities.",
+    "When turn.unavailableMemberIds is present, act as the recovery owner: do not claim those members completed their work; clearly report useful status and reorganize, reassign, or finish the missing work.",
     `Message transport: ordinary text is public. Use ${GROUP_MESSAGE_BREAK} on its own line to separate messages. @names are public addresses; the dispatch model decides who acts next.`,
     "Private delivery: [[private:RECIPIENT_ID]]message[[/private]] sends to a member id; [[private:human]]message[[/private]] sends to the human in your direct chat with an unread notification. Private blocks are removed from the public stream. Multiple private blocks and private-only replies are supported. privateInbox bodies are visible only to their sender and recipient; keep their contents within that audience unless disclosure is authorized. Tool input and output are not private message delivery channels.",
     JSON.stringify({
