@@ -144,6 +144,10 @@ pnpm dev:web         # dev PTY server (:5175) + web (:15173) — open http://loc
 pnpm dev:desktop     # the same, plus the badged Tauri Dev app
 ```
 
+On macOS, the desktop scripts verify that the selected SDK and linker are compatible. If a
+standalone Command Line Tools update is inconsistent with its SDK, Termany automatically uses
+an installed Xcode toolchain for that run without changing the system-wide `xcode-select` setting.
+
 The desktop client wraps `apps/web` in [Tauri](https://tauri.app) and ships the Node PTY/API
 server alongside it (a bundled Node runtime and `node-pty`), so it runs offline with no
 separate install.
