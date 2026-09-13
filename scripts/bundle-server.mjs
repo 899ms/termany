@@ -4,6 +4,7 @@
 //   apps/desktop/src-tauri/resources/server/
 //     ├─ node (or node.exe)        (bundled Node runtime for the host platform)
 //     ├─ server.cjs                (the server, bundled; node-pty left external)
+//     ├─ acp/*.mjs                 (small bridges that reuse user-installed CLIs)
 //     └─ node_modules/node-pty/…   (native addon + prebuilds for the host)
 //
 // Platform-aware: bundles for whatever platform/arch this script runs on, so
@@ -48,6 +49,7 @@ const NODE_BIN = IS_WIN ? "node.exe" : "node";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const out = path.join(root, "apps/desktop/src-tauri/resources/server");
+const serverRequire = createRequire(path.join(root, "apps/server/package.json"));
 // Force bash on unix (the curl|tar pipe needs it); on Windows let execSync use
 // the default ComSpec (cmd.exe) — curl and tar ship with Windows 10+.
 const run = (cmd) =>
@@ -71,7 +73,22 @@ run(
     `--outfile="${path.join(out, "server.cjs")}"`
 );
 
-// 2. Ship node-pty next to the bundle. Keep only the host's prebuild (other
+// 2. Bundle the Claude and Codex ACP protocol bridges without their optional
+// platform binaries. At runtime Termany supplies the absolute path of the
+// user's authenticated CLI, so these stay small and never duplicate an agent.
+const acpDir = path.join(out, "acp");
+mkdirSync(acpDir, { recursive: true });
+for (const [entry, filename] of [
+  ["@agentclientprotocol/claude-agent-acp/dist/index.js", "claude-agent-acp.mjs"],
+  ["@agentclientprotocol/codex-acp", "codex-acp.mjs"],
+]) {
+  run(
+    `npx --no-install esbuild "${serverRequire.resolve(entry)}" --bundle --platform=node ` +
+      `--format=esm --target=node22 --outfile="${path.join(acpDir, filename)}"`
+  );
+}
+
+// 3. Ship node-pty next to the bundle. Keep only the host's prebuild (other
 //    arches' native files just add bloat and, on macOS, break codesign), and
 //    drop the .pdb debug symbols the Windows prebuilds carry (~40MB).
 //    Resolve node-pty from apps/server (the package that depends on it): with
@@ -79,7 +96,7 @@ run(
 //    realpath escapes pnpm's symlink so cpSync copies real files.
 const ptySrc = realpathSync(
   path.dirname(
-    createRequire(path.join(root, "apps/server/package.json")).resolve("node-pty/package.json")
+    serverRequire.resolve("node-pty/package.json")
   )
 );
 const ptyDst = path.join(out, "node_modules/node-pty");
@@ -100,7 +117,7 @@ if (existsSync(prebuilds)) {
   }
 }
 
-// 3. Bundled Node runtime for the host platform. The archive is cached outside
+// 4. Bundled Node runtime for the host platform. The archive is cached outside
 //    `out` (which is wiped on every run) so repeat builds skip the download;
 //    download to a .tmp file first so a Ctrl+C can't leave a corrupt cache.
 const NODE_DIST_URL = process.env.TERMANY_NODE_DIST_URL?.trim() || "https://nodejs.org/dist";

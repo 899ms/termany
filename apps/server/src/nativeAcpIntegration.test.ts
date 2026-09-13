@@ -15,7 +15,9 @@ test("native bots support model selection, continuous turns, permissions and can
   t.after(async () => { runtime.closeAllAcpRuntimes(); await fs.rm(directory, { recursive: true, force: true }); });
   const fixture = fileURLToPath(new URL("../tests/fixtures/native-acp.mjs", import.meta.url));
   db.setAgentsRaw(JSON.stringify(["gemini", "kimi", "kilocode", "cursor", "image", "corrupt", "exit", "child"].map((id) => ({
-    id, name: id, command: process.execPath, args: "", enabled: true,
+    // Terminal launch and native conversation support are independent: Kimi's
+    // ACP runtime must remain available while its CLI/TUI launcher is off.
+    id, name: id, command: process.execPath, args: "", enabled: id !== "kimi",
     runtime: { protocol: "acp", distribution: "custom", modelSource: "agent", command: process.execPath,
       args: `${JSON.stringify(fixture)} ${id === "gemini" ? "legacy" : id}` },
   }))));

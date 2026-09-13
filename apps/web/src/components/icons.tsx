@@ -35,6 +35,7 @@ import {
   FlaskConical,
   Loader2,
   ListFilter,
+  ListChecks,
   MessageCircle,
   MessageSquareText,
   Ellipsis,
@@ -272,6 +273,11 @@ export function ChartIcon() {
 /** Check mark — a passed connectivity test. */
 export function CheckIcon() {
   return <Check {...base} />;
+}
+
+/** Checklist — marks every conversation as read. */
+export function MarkAllReadIcon() {
+  return <ListChecks {...base} />;
 }
 
 /** Two stacked sheets — copy a message to the clipboard. */

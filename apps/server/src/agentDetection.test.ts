@@ -7,6 +7,28 @@ import test from "node:test";
 import { defaultAgentRuntime } from "@termany/core";
 import { detectAgentExecutable, parseAgentDetectionInput } from "./agentDetection.js";
 
+test("managed Claude and Codex runtimes require their user-installed CLI", async (t) => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "termany-managed-detect-"));
+  t.after(() => fs.rm(directory, { recursive: true, force: true }));
+  for (const id of ["claude", "codex"] as const) {
+    const cli = path.join(directory, id);
+    await fs.writeFile(cli, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    const result = await detectAgentExecutable({
+      id,
+      name: id,
+      command: cli,
+      args: "",
+      enabled: true,
+      builtIn: true,
+      runtime: defaultAgentRuntime(id),
+    });
+    assert.equal(result.installed, true);
+    assert.equal(result.terminalInstalled, true);
+    assert.equal(result.terminalPath, cli);
+    assert.match(result.path ?? "", /acp.*\.m?js$/);
+  }
+});
+
 test("detection excludes an installed native CLI that lacks ACP", { skip: process.platform === "win32" }, async (t) => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "termany-agent-detect-"));
   const bin = path.join(directory, "bin");
@@ -38,6 +60,8 @@ test("detection excludes an installed native CLI that lacks ACP", { skip: proces
     runtime: defaultAgentRuntime("kilocode"),
   });
   assert.equal(result.installed, false);
+  assert.equal(result.terminalInstalled, true);
+  assert.equal(result.terminalPath, path.join(bin, "kilo"));
   assert.match(result.error ?? "", /does not support ACP/);
 });
 
@@ -94,11 +118,12 @@ test("FastClaw detection verifies ACP version and API key", async (t) => {
   assert.ok(address && typeof address === "object");
   const base = `http://127.0.0.1:${address.port}/acp`;
   const agent = {
-    id: "fastclaw", name: "FastClaw", command: "fastclaw", args: "", enabled: true, builtIn: true,
+    id: "fastclaw", name: "FastClaw", command: "termany-fastclaw-test-missing", args: "", enabled: true, builtIn: true,
     runtime: { protocol: "acp-http" as const, endpoint: base, apiKey: "test-key" },
   };
   assert.deepEqual(await detectAgentExecutable(agent), {
     id: "fastclaw", command: base, installed: true, path: base,
+    terminalInstalled: false,
   });
   const denied = await detectAgentExecutable({ ...agent, runtime: { ...agent.runtime, apiKey: "wrong" } });
   assert.equal(denied.installed, false);

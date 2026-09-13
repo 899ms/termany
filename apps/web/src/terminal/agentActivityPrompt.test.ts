@@ -110,6 +110,12 @@ test("shells that do not end in $ or % still read as a prompt", () => {
   assert.equal(shellPromptVisible("root@box:/srv# "), true);
 });
 
+test("a shell startup question is not mistaken for a ready prompt", () => {
+  const updatePrompt = "[oh-my-zsh] Would you like to update? [Y/n]";
+  assert.equal(shellPromptVisible(updatePrompt), false);
+  assert.equal(agentConfirmationPromptVisible(updatePrompt, updatePrompt), true);
+});
+
 /**
  * A working agent repaints; an idle one does not. These run the quiet window
  * over the write timings of a real 34s Claude Code turn, because the previous

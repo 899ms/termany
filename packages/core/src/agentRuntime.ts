@@ -11,7 +11,7 @@ export type AgentRuntimeConfig = {
   apiKey: string;
 };
 
-export const AGENT_RUNTIME_REVISION = 4;
+export const AGENT_RUNTIME_REVISION = 6;
 
 // The introduction revision is per agent: adding a new adapter must not
 // re-enable an older adapter that the user explicitly turned off.
@@ -19,10 +19,15 @@ type RuntimePreset = (AgentRuntimeConfig & { revision: number });
 const stdio = (command: string, args: string, revision: number): RuntimePreset => ({
   protocol: "acp", command, args, revision, distribution: "system", modelSource: "agent",
 });
+const managed = (command: string, revision: number): RuntimePreset => ({
+  protocol: "acp", command, args: "", revision, distribution: "managed", modelSource: "agent",
+});
 
 const BUILTIN_RUNTIMES: Record<string, RuntimePreset> = {
-  claude: stdio("npx", "-y @agentclientprotocol/claude-agent-acp", 1),
-  codex: stdio("npx", "-y @agentclientprotocol/codex-acp", 1),
+  // Termany ships these small ACP bridges and points them at the user's CLI.
+  // This avoids requiring system Node/npx or downloading a second agent binary.
+  claude: managed("claude-agent-acp", 1),
+  codex: managed("codex-acp", 1),
   opencode: stdio("opencode", "acp", 1),
   gemini: stdio("gemini", "--acp", 2),
   kimi: stdio("kimi", "acp", 2),
@@ -37,6 +42,7 @@ const BUILTIN_RUNTIMES: Record<string, RuntimePreset> = {
   fastclaw: {
     protocol: "acp-http", endpoint: "http://127.0.0.1:18953/acp", apiKey: "", revision: 4,
   },
+  grok: stdio("grok", "agent stdio", 5),
 };
 
 export function defaultAgentRuntime(id: string): AgentRuntimeConfig | undefined {
@@ -53,9 +59,45 @@ export function inheritsDefaultAgentRuntime(input: {
   runtimeRevision?: number;
 }): boolean {
   if (!Object.prototype.hasOwnProperty.call(input, "runtime")) return true;
+  // Older releases launched these bridges through system npx. Move only the
+  // exact built-in presets to the packaged bridge; custom adapters stay put.
+  if (isLegacyNpxRuntime(input.id, input.runtime)) return true;
+  // FastClaw originally shipped as a stdio Agent Client Protocol preset. The
+  // CLI now exposes BeeAI Agent Communication Protocol 0.2 through its HTTP
+  // gateway instead, so the old built-in command can never work. Match only
+  // that exact system preset: custom commands and explicit opt-outs remain
+  // user-owned even after the built-in default changes.
+  if (isLegacyFastClawRuntime(input.id, input.runtime)) return true;
   if (input.runtime != null) return false;
   const introduced = BUILTIN_RUNTIMES[input.id]?.revision;
   if (!introduced) return false;
   const revision = Number(input.runtimeRevision);
   return !Number.isFinite(revision) || revision < introduced;
+}
+
+function isLegacyNpxRuntime(id: string, raw: unknown): boolean {
+  const packages: Record<string, string> = {
+    claude: "@agentclientprotocol/claude-agent-acp",
+    codex: "@agentclientprotocol/codex-acp",
+  };
+  const packageName = packages[id];
+  if (!packageName || !raw || typeof raw !== "object" || Array.isArray(raw)) return false;
+  const runtime = raw as Record<string, unknown>;
+  return runtime.protocol === "acp" &&
+    String(runtime.command ?? "").trim() === "npx" &&
+    String(runtime.args ?? "").trim() === `-y ${packageName}` &&
+    (runtime.distribution === undefined || runtime.distribution === "system") &&
+    (runtime.modelSource === undefined || runtime.modelSource === "agent");
+}
+
+function isLegacyFastClawRuntime(id: string, raw: unknown): boolean {
+  if (id !== "fastclaw" || !raw || typeof raw !== "object" || Array.isArray(raw)) return false;
+  const runtime = raw as Record<string, unknown>;
+  const distribution = runtime.distribution;
+  const modelSource = runtime.modelSource;
+  return runtime.protocol === "acp" &&
+    String(runtime.command ?? "").trim() === "fastclaw" &&
+    String(runtime.args ?? "").trim() === "acp" &&
+    (distribution === undefined || distribution === "system") &&
+    (modelSource === undefined || modelSource === "agent");
 }

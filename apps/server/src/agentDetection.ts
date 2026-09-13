@@ -1,5 +1,6 @@
 import type { AgentConfig } from "./agentConfig.js";
 import { checkGeminiAuthSupport } from "./geminiAuth.js";
+import { managedAcpAdapterPath, managedAcpDefinition } from "./managedAcp.js";
 import { checkNativeAcpSupport } from "./nativeAcp.js";
 import { resolveExecutable, spawnEnvironment } from "./shellPath.js";
 
@@ -9,6 +10,11 @@ export type AgentDetection = {
   installed: boolean;
   path?: string;
   error?: string;
+  /** Installation state of the interactive CLI (`agent.command`). This is
+   * separate from `installed`, which describes the conversation runtime and
+   * may resolve to npx or an HTTP ACP endpoint instead. */
+  terminalInstalled?: boolean;
+  terminalPath?: string;
 };
 
 /** Keep the local detection endpoint tolerant of stale or hand-edited client
@@ -104,26 +110,57 @@ async function resolvedDetection(
     : { id, command, installed: false };
 }
 
-/** Detect a configured Agent's conversation runtime, including the native ACP
- * capability check used immediately before launch. This keeps an installed but
- * incompatible CLI out of the Bot picker. */
+/** Detect the terminal CLI and conversation runtime independently. The runtime
+ * result includes the native ACP capability check used immediately before
+ * launch, keeping an installed but incompatible CLI out of the Bot picker. */
 export async function detectAgentExecutable(
   agent: AgentConfig,
   env?: NodeJS.ProcessEnv
 ): Promise<AgentDetection> {
-  if (agent.runtime?.protocol === "acp-http") return detectHttpAcp(agent, env);
+  const terminal = await resolvedDetection(agent.command, agent.id);
+  const terminalResult = {
+    terminalInstalled: terminal.installed,
+    ...(terminal.path ? { terminalPath: terminal.path } : {}),
+  };
+  if (agent.runtime?.protocol === "acp-http") {
+    return { ...await detectHttpAcp(agent, env), ...terminalResult };
+  }
+  if (agent.runtime?.protocol === "acp" && agent.runtime.distribution === "managed") {
+    const definition = managedAcpDefinition(agent.id);
+    const adapterPath = managedAcpAdapterPath(agent.id);
+    if (!terminal.installed || !terminal.path) {
+      return { id: agent.id, command: agent.runtime.command, installed: false, ...terminalResult };
+    }
+    if (!definition || !adapterPath) {
+      return {
+        id: agent.id,
+        command: agent.runtime.command,
+        installed: false,
+        error: `Termany's ${agent.name} ACP bridge is missing`,
+        ...terminalResult,
+      };
+    }
+    return {
+      id: agent.id,
+      command: agent.runtime.command,
+      installed: true,
+      path: adapterPath,
+      ...terminalResult,
+    };
+  }
   const command = agent.runtime?.protocol === "acp" ? agent.runtime.command : agent.command;
-  const result = await resolvedDetection(command, agent.id);
-  if (!result.installed || !result.path || !agent.runtime) return result;
+  const result = command === agent.command ? terminal : await resolvedDetection(command, agent.id);
+  if (!result.installed || !result.path || !agent.runtime) return { ...result, ...terminalResult };
 
   try {
     const runtimeEnv = env ?? await spawnEnvironment();
     await checkGeminiAuthSupport(agent, runtimeEnv);
     await checkNativeAcpSupport(agent, result.path, runtimeEnv);
-    return result;
+    return { ...result, ...terminalResult };
   } catch (error) {
     return {
       ...result,
+      ...terminalResult,
       installed: false,
       error: error instanceof Error ? error.message : String(error),
     };

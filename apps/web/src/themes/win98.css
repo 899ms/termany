@@ -95,6 +95,7 @@ html[data-theme="win98"] ::selection {
 html[data-theme="win98"] .agent-message-user .agent-message-content,
 html[data-theme="win98"] .agent-menu-icon,
 html[data-theme="win98"] .search-row-chord,
+html[data-theme="win98"] .agent-settings-built-in,
 html[data-theme="win98"] .ms-badge,
 html[data-theme="win98"] .codex-theme-mode,
 html[data-theme="win98"] .about-logo,
@@ -632,6 +633,18 @@ html[data-theme="win98"] .agent-enable-toggle button.active {
   background: var(--w98-face);
   color: #000;
   font-weight: bold;
+  box-shadow: var(--w98-down);
+}
+html[data-theme="win98"] .agent-install-btn,
+html[data-theme="win98"] .agent-model-action {
+  border: none;
+  border-radius: 0;
+  background: var(--w98-face);
+  color: #000;
+  box-shadow: var(--w98-out);
+}
+html[data-theme="win98"] .agent-install-btn:active:not(:disabled),
+html[data-theme="win98"] .agent-model-action:active:not(:disabled) {
   box-shadow: var(--w98-down);
 }
 html[data-theme="win98"] .ssh-auth-switch button:focus-visible {
