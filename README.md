@@ -37,13 +37,28 @@ page tree, so you do not open twenty tabs to find the one that stopped.
 ⌘P searches commands, pages, tabs, and panes by name. ⌘M maximizes one pane over a dimmed
 background. On desktop, ⌥⌘N opens a second window on the same workspaces.
 
-Launch an agent into any pane from the right-hand rail. **Claude, Codex, Gemini, OpenClaw,
-FastClaw, Hermes, OpenCode, Kilocode, Cursor, Kimi, Droid, and OMP** ship built in. Claude,
-Codex, and OpenClaw are enabled by default; enable the rest with one toggle. Point an agent
-at a different binary, or add your own agent, in Settings → Agents. **Detect** probes your
-machine and lists what it finds.
+Launch an agent into any pane from the right-hand rail. **Claude, Codex, Gemini, Grok Build,
+OpenClaw, FastClaw, Hermes, OpenCode, Cursor, Kimi, and OMP** ship built in. Claude, Codex,
+and OpenClaw are enabled by default; enable the rest with one toggle. Point an agent at a
+different binary, or add your own agent, in Settings → Agents. **Detect** probes your machine
+and lists what it finds.
+
+Claude and Codex Bots use your locally installed and authenticated official CLI. If one is
+missing, Termany links you to its official installer from Settings → Agents. Termany ships the
+small ACP bridge and the Node runtime needed to run it, so Bot conversations do not require a
+separate system `node` or `npx` installation.
 
 ![Four panes in one tab: an agent, a shell, the activity monitor, and a chat pane](docs/sessions.png)
+
+## Bots that work together
+
+Turn an agent into a reusable Bot with its own name, avatar, role, model, and working folder.
+Talk to it directly, or put several Bots into a group chat. A lead member coordinates the
+conversation, delegates work, and consolidates the result; `@` mentions route a message to a
+specific member. Topics keep separate tasks from sharing one long transcript, while every Bot
+retains a clear identity in the conversation.
+
+![A group of coding Bots playing a coordinated game in a shared topic](docs/bots.png)
 
 ## Review in the same window
 

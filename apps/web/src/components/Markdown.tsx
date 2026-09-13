@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, type MouseEvent } from "react";
 import DOMPurify from "dompurify";
 import { Marked } from "marked";
 import { useI18n } from "../i18n";
+import { apiPath } from "../api";
+import { markdownMediaUrl } from "../markdownLocalMedia";
 
 /** Fences that read as shell commands get a run button; the rest copy only. */
 const SHELL_LANGS = new Set(["", "sh", "bash", "zsh", "shell", "console", "cmd", "powershell"]);
@@ -32,6 +34,19 @@ marked.use({
       );
     },
   },
+});
+
+// Agent tools often save screenshots locally and return their absolute path in
+// ordinary Markdown instead of an ACP image block. Rewrite those paths before
+// sanitization so images render inline and file links open through the same
+// local media endpoint used by structured attachments.
+DOMPurify.addHook("beforeSanitizeAttributes", (node) => {
+  const attribute = node.tagName === "IMG" ? "src" : node.tagName === "A" ? "href" : undefined;
+  if (!attribute) return;
+  const value = node.getAttribute(attribute);
+  if (!value) return;
+  const mediaUrl = markdownMediaUrl(value, apiPath("/api/fs/media"));
+  if (mediaUrl) node.setAttribute(attribute, mediaUrl);
 });
 
 DOMPurify.addHook("afterSanitizeAttributes", (node) => {

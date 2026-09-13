@@ -62,7 +62,7 @@ export function SideRail({
   const setAgentRuntime = useStore((s) => s.setAgentRuntime);
   const railVisibility = useStore((s) => s.railVisibility);
   const { t } = useI18n();
-  const agents = useAgentConfigs().filter((agent) => agent.enabled);
+  const agents = useAgentConfigs().filter((agent) => agent.enabled || agent.runtime);
   const agentsRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -154,7 +154,7 @@ export function SideRail({
                     <span>{agent.name}</span>
                     {agent.runtime && <ChatIcon />}
                   </button>
-                  {agent.runtime && (
+                  {agent.runtime && agent.enabled && agentCommand(agent) && (
                     <button
                       className="agent-menu-terminal"
                       title={`${t("agents.openTerminal")}: ${agent.name}`}

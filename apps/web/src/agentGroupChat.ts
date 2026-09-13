@@ -34,6 +34,11 @@ export interface GroupConversationResult {
   unavailableMemberIds: string[];
 }
 
+export interface GroupFailover {
+  unavailableMemberIds: string[];
+  replacementMemberId: string;
+}
+
 // Execution guard only; the model decides when the conversation is complete.
 export const GROUP_MAX_TURNS = 24;
 export const GROUP_MEMBER_INACTIVITY_TIMEOUT_MS = 90_000;
@@ -204,7 +209,7 @@ function handoffsFrom(
 /** Explicit mentions bypass the controller. Ambiguous tasks remain supervised:
  * after explicit public/private handoffs settle, the coordinator checks shared
  * progress and either schedules the next step or declares the task complete. */
-export async function runGroupConversation({ group, user, history = [], privateMessages = [], signal, decide, reply, maxTurns = GROUP_MAX_TURNS }: {
+export async function runGroupConversation({ group, user, history = [], privateMessages = [], signal, decide, reply, onFailover, maxTurns = GROUP_MAX_TURNS }: {
   group: AgentGroup;
   user: AgentMessage;
   history?: AgentMessage[];
@@ -212,6 +217,7 @@ export async function runGroupConversation({ group, user, history = [], privateM
   signal: AbortSignal;
   decide: (context: GroupDecisionContext) => Promise<unknown>;
   reply: (member: AgentConversation, turn: GroupTurn, messages: AgentMessage[]) => Promise<AgentMessage[] | GroupReply>;
+  onFailover?: (failover: GroupFailover) => void;
   maxTurns?: number;
 }): Promise<GroupConversationResult> {
   const finish = (limited = false, failed = false, unavailable = new Set<string>()): GroupConversationResult => ({
@@ -298,19 +304,27 @@ export async function runGroupConversation({ group, user, history = [], privateM
     const executeWithFailover = async (item: typeof batch[number], index: number, visible: AgentMessage[],
       initial?: Awaited<ReturnType<typeof execute>>) => {
       const attempted = new Set<string>();
+      const failedMemberIds: string[] = [];
       let result = initial;
       if (result) {
         attempted.add(result.member.id);
         if (!result.outcome.failed) return result;
         quarantine(result.member.id);
+        failedMemberIds.push(result.member.id);
       }
       while (!signal.aborted) {
         const member = candidatesFor(item.memberId, attempted)[0];
         if (!member) return result;
         attempted.add(member.id);
         result = await execute({ ...item, unavailableMemberIds: [...unavailable] }, index, visible, member);
-        if (!result.outcome.failed) return result;
+        if (!result.outcome.failed) {
+          if (failedMemberIds.length) {
+            onFailover?.({ unavailableMemberIds: failedMemberIds, replacementMemberId: member.id });
+          }
+          return result;
+        }
         quarantine(member.id);
+        failedMemberIds.push(member.id);
       }
       return result;
     };

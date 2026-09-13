@@ -117,6 +117,7 @@ export function noteManualScroll(id: string) {
 function finishSessionWrite(id: string) {
   const session = sessions.get(id);
   if (!session) return;
+  flushShellReadyCommands(id);
   completeAgentActivityIfIdle(id);
   if (session.followOutput && Date.now() >= session.manualScrollUntil) {
     settleSessionAtBottom(id);
@@ -195,6 +196,7 @@ const glyphAtlasRepairer = createGlyphAtlasRepairer({
 const activeSessionByPane = new Map<string, string>();
 const sessionIdsByPane = new Map<string, Set<string>>();
 const pendingCommands = new Map<string, string[]>();
+const shellReadyCommands = new Map<string, string[]>();
 const scrollListeners = new Map<string, Set<(state: TerminalScrollState) => void>>();
 const connectionStatusListeners = new Set<() => void>();
 const SSH_EXIT_EVENT = "termany:ssh-session-exited";
@@ -2113,6 +2115,25 @@ export function queueCommand(id: string, command: string) {
   pendingCommands.set(id, [...(pendingCommands.get(id) ?? []), command]);
 }
 
+/**
+ * Queue a command until a real shell prompt is visible. Fresh interactive
+ * shells may pause inside startup scripts (for example oh-my-zsh's update
+ * question); sending on a fixed timer lets that prompt consume the command's
+ * first character and leaves `url ...` where `curl ...` was intended.
+ */
+export function queueCommandWhenShellReady(id: string, command: string) {
+  id = activeSessionId(id);
+  shellReadyCommands.set(id, [...(shellReadyCommands.get(id) ?? []), command]);
+  flushShellReadyCommands(id);
+}
+
+function flushShellReadyCommands(id: string) {
+  const queued = shellReadyCommands.get(id);
+  if (!queued?.length || !shellPromptVisible(sessionVisibleText(id))) return;
+  shellReadyCommands.delete(id);
+  for (const command of queued) void sendCommand(id, command);
+}
+
 /** Insert text at the cursor via xterm's paste pipeline — same path clipboard
  *  image paste uses (see the `paste` listener above), so apps with bracketed
  *  paste on (vim, claude, modern shells) see it as one paste, not typed
@@ -2202,6 +2223,7 @@ export function disposeSession(id: string) {
   agentTaskStartScreens.delete(id);
   terminalInputSendChains.delete(id);
   commandSendChains.delete(id);
+  shellReadyCommands.delete(id);
   const activityChanged = agentActivities.delete(id);
   const presenceChanged = agentActiveSessions.delete(id);
   if (activityChanged || presenceChanged) notifyAgentActivity();
@@ -2223,6 +2245,7 @@ export function disposePaneSessions(paneId: string) {
   activeSessionByPane.delete(paneId);
   sessionIdsByPane.delete(paneId);
   pendingCommands.delete(paneId);
+  shellReadyCommands.delete(paneId);
   for (const id of ids) {
     const s = sessions.get(id);
     if (s) {
@@ -2232,6 +2255,7 @@ export function disposePaneSessions(paneId: string) {
       sessions.delete(id);
     }
     restoreSnapshots.delete(id);
+    shellReadyCommands.delete(id);
     clearAgentIdleTimer(id);
     agentIdleReports.delete(id);
     agentResumeReports.delete(id);

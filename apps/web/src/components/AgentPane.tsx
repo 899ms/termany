@@ -2,7 +2,8 @@ import { textInputProps } from "../textInputProps";
 import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { BotIdentity } from "@termany/core";
-import { useAgentConfigs } from "../agents";
+import { agentCommand, useAgentConfigs } from "../agents";
+import { authenticationErrorSummary, needsInteractiveAgentLogin } from "../agentAuthentication";
 import { modelLabelFor, modelMenuItems, shortModelName, type AcpConfigOption } from "../agentModelMenu";
 import { agentModelSetup } from "../agentModelSetup";
 import { agentReplyPrompt, splitAgentReply, visibleAgentMessages } from "../agentMessages";
@@ -490,6 +491,11 @@ export function AgentPane({
   const [groupLimited, setGroupLimited] = useState(false);
   const [groupPlanning, setGroupPlanning] = useState<{ startedAt: number } | null>(null);
   const [groupError, setGroupError] = useState(false);
+  const [groupTakeover, setGroupTakeover] = useState<{
+    unavailableName: string;
+    replacementId: string;
+    replacementName: string;
+  } | null>(null);
   const [permissions, setPermissions] = useState<PendingPermission[]>([]);
   const [replyingTo, setReplyingTo] = useState<NonNullable<AgentMessage["replyTo"]> | null>(null);
   const [cwdInfo, setCwdInfo] = useState<{ cwd: string; home: string } | null>(null);
@@ -553,7 +559,10 @@ export function AgentPane({
     return () => onStreamingChange?.(runtimePaneId, false);
   }, [runtimePaneId, streaming, onStreamingChange]);
 
-  useEffect(() => setReplyingTo(null), [runtimePaneId]);
+  useEffect(() => {
+    setReplyingTo(null);
+    setGroupTakeover(null);
+  }, [runtimePaneId]);
 
   useEffect(() => {
     if (!focused) return;
@@ -728,7 +737,7 @@ export function AgentPane({
     };
   }, [optionsOpen, streaming]);
 
-  const runtimes = agents.filter((agent) => agent.enabled && agent.runtime);
+  const runtimes = agents.filter((agent) => agent.runtime);
   const memberRuntimeIcon = (member: AgentConversation | undefined) => member?.agentRuntime === ""
     ? termanyIcon
     : runtimes.find((runtime) => runtime.id === (member?.agentRuntime ?? runtimes[0]?.id))?.icon;
@@ -1071,6 +1080,7 @@ export function AgentPane({
     setMention(null);
     setGroupLimited(false);
     setGroupError(false);
+    setGroupTakeover(null);
     setDraft("");
     setReplyingTo(null);
     setDraftImages([]);
@@ -1318,7 +1328,13 @@ export function AgentPane({
         if (privateMessages.length && !failure && !abort.signal.aborted) {
           useStore.getState().deliverAgentPrivateMessages(leaf.id, privateMessages);
         } else privateMessages = [];
-        if (text.trim() || assistant.attachments?.length || hasTools() || failure) {
+        // Group failover owns member failures. Remove the failed placeholder
+        // instead of leaving a raw runtime error attributed to that Bot; the
+        // temporary-coordinator notice explains what happened without making
+        // the broken attempt look like a real reply.
+        if (failure && group && member) {
+          completed = [];
+        } else if (text.trim() || assistant.attachments?.length || hasTools() || failure) {
           const result = { ...draftReply(), durationMs: Date.now() - startedAt, ...(failure ? { error: failure } : {}) };
           completed = splitAgentReply(result).map((item) => group ? {
             ...item,
@@ -1348,8 +1364,21 @@ export function AgentPane({
       if (group) {
         let coordinator = leadMember;
         const unavailableCoordinators = new Set<string>();
+        const showTemporaryLead = (unavailableMemberIds: string[], replacementMemberId: string) => {
+          if (!leadMember || !unavailableMemberIds.includes(leadMember.id)) return;
+          const replacement = group.members.find((member) => member.id === replacementMemberId);
+          if (!replacement || replacement.id === leadMember.id) return;
+          setGroupTakeover({
+            unavailableName: leadMember.title,
+            replacementId: replacement.id,
+            replacementName: replacement.title,
+          });
+        };
         const result = await runGroupConversation({ group, user, history, signal: abort.signal, reply,
           privateMessages: topicPrivateMessages(),
+          onFailover: ({ unavailableMemberIds, replacementMemberId }) => {
+            showTemporaryLead(unavailableMemberIds, replacementMemberId);
+          },
           decide: async (context) => {
             setGroupPlanning({ startedAt: Date.now() });
             try {
@@ -1375,9 +1404,7 @@ export function AgentPane({
               });
               outcome.failedMemberIds.forEach((memberId) => unavailableCoordinators.add(memberId));
               coordinator = outcome.leader;
-              if (outcome.failedMemberIds.length && outcome.leader.id !== leadMember?.id) {
-                setAgentGroupLeadMember(leaf.id, outcome.leader.id);
-              }
+              showTemporaryLead(outcome.failedMemberIds, outcome.leader.id);
               return outcome.decision;
             } finally {
               setGroupPlanning(null);
@@ -1496,6 +1523,15 @@ export function AgentPane({
     if (source.agentCwd) queueCommand(paneId, `cd '${source.agentCwd.replace(/'/g, "'\\''")}'`);
     queueCommand(paneId, code);
   };
+  const openRuntimeLogin = () => {
+    if (!activeRuntime) return;
+    const paneId = addPane("terminal", `${activeRuntime.name} Login`);
+    if (!paneId) return;
+    const run = agentCommand(activeRuntime);
+    if (cwdInfo?.cwd) queueCommand(paneId, `cd '${cwdInfo.cwd.replace(/'/g, "'\\''")}' && ${run}`);
+    else queueCommand(paneId, run);
+    window.dispatchEvent(new Event("termany:open-pages"));
+  };
   const pickCwd = async () => {
     if (picking) return;
     setPicking(true);
@@ -1576,7 +1612,17 @@ export function AgentPane({
         <span>{t("agentChat.addAttachment")}</span>
       </div>}
       <div className="agent-thread" ref={threadRef} aria-live="polite" onScroll={onThreadScroll}>
-        {empty ? null : (
+        {empty ? (
+          appearance === "pane" ? (
+            <div className="agent-messages agent-empty-greeting">
+              <article className="agent-message agent-message-assistant">
+                <div className="agent-message-content">
+                  <p>{t("agentChat.title")}</p>
+                </div>
+              </article>
+            </div>
+          ) : null
+        ) : (
           <div className="agent-messages" ref={messageListRef}>
             {visibleMessages.map((item, index) => {
               const continuation = sameReplyGroup(visibleMessages[index - 1], item);
@@ -1584,6 +1630,7 @@ export function AgentPane({
               const pendingPhase = pendingReplies[item.id];
               const running = streaming && Boolean(pendingPhase);
               const { steps, body } = splitSteps(item);
+              const loginRequired = needsInteractiveAgentLogin(selectedRuntime, item.error);
               const hasVisibleBody = Boolean(body || item.attachments?.length || item.files?.length || item.error || (running && steps.length === 0));
               const speaker = mentionMembers.find((member) => member.id === item.sender?.id);
               return (
@@ -1639,12 +1686,24 @@ export function AgentPane({
                                 </span>
                               ))}
                             </div> : null}
-                            {body ? (
+                            {body && !loginRequired ? (
                               <Markdown text={body} onRun={(code) => runSnippet(code, speaker)} />
                             ) : running && steps.length === 0 ? (
                               <AgentReplyStatus phase={pendingPhase} startedAt={item.createdAt} />
                             ) : null}
-                            {item.error && <div className="agent-message-error">{item.error}</div>}
+                            {item.error && (loginRequired ? (
+                              <div className="agent-auth-recovery" role="alert">
+                                <strong>{authenticationErrorSummary(item.error)}</strong>
+                                <span>
+                                  {t("agentChat.agentModelsSignIn", { agent: activeRuntime?.name ?? "Claude" })}
+                                  <code>/login</code>
+                                </span>
+                                <button type="button" onClick={openRuntimeLogin}>
+                                  <TerminalIcon />
+                                  {t("agentChat.agentModelsRun")}
+                                </button>
+                              </div>
+                            ) : <div className="agent-message-error">{item.error}</div>)}
                           </div>
                         )}
                       </div>
@@ -1749,6 +1808,20 @@ export function AgentPane({
         {attachmentError && <div className="agent-attachment-error" role="alert">{t("agentChat.attachmentError")}</div>}
         {groupError && <div className="agent-attachment-error" role="alert">{t("agentGroup.routingError")}</div>}
         {groupLimited && <div className="agent-group-notice" role="status">{t("agentGroup.roundLimit")}</div>}
+        {groupTakeover && leadMember?.id !== groupTakeover.replacementId && (
+          <div className="agent-group-takeover" role="status">
+            <span>{t("agentGroup.temporaryLead", {
+              unavailable: groupTakeover.unavailableName,
+              replacement: groupTakeover.replacementName,
+            })}</span>
+            {!streaming && <button type="button" onClick={() => {
+              setAgentGroupLeadMember(leaf.id, groupTakeover.replacementId);
+              setGroupTakeover(null);
+            }}>
+              {t("agentGroup.makeLead", { name: groupTakeover.replacementName })}
+            </button>}
+          </div>
+        )}
         <div
           className="agent-composer"
           ref={composerRef}

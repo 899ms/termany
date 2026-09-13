@@ -11,7 +11,7 @@ const checked = new Map<string, Promise<void>>();
  *  the probe below would read a supported CLI as unsupported. CLIs colorize
  *  whenever the launching environment carries FORCE_COLOR, even off a TTY. */
 const ANSI_ESCAPE = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
-const NATIVE_AGENTS = new Set(["gemini", "kimi", "kilocode", "cursor", "openclaw", "hermes", "omp"]);
+const NATIVE_AGENTS = new Set(["gemini", "grok", "kimi", "kilocode", "cursor", "openclaw", "hermes", "omp"]);
 
 /** Some older CLIs treat an unknown `acp` argument as a prompt. Probe help
  * before launching the built-in adapter, so we never send protocol JSON to
@@ -27,7 +27,9 @@ export async function checkNativeAcpSupport(agent: AgentConfig, command: string,
   let check = checked.get(key);
   if (!check) {
     check = (async () => {
-      const args = agent.id === "cursor" || agent.id === "kimi" ? ["acp", "--help"] : ["--help"];
+      const args = agent.id === "grok"
+        ? ["agent", "stdio", "--help"]
+        : agent.id === "cursor" || agent.id === "kimi" ? ["acp", "--help"] : ["--help"];
       let help: string;
       try {
         const result = await execFileAsync(command, args, { env, timeout: 15_000, maxBuffer: 256_000 });
@@ -35,7 +37,9 @@ export async function checkNativeAcpSupport(agent: AgentConfig, command: string,
       } catch (error) {
         throw new Error(`Cannot start ${agent.name}. Check or reinstall its CLI. ${error instanceof Error ? error.message : String(error)}`);
       }
-      const supportsAcp = agent.id === "gemini" ? /--acp\b/.test(help) : /\bacp\b/i.test(help);
+      const supportsAcp = agent.id === "grok"
+        ? /Usage:\s+grok agent stdio\b/i.test(help)
+        : agent.id === "gemini" ? /--acp\b/.test(help) : /\bacp\b/i.test(help);
       if (!supportsAcp) {
         throw new Error(`${agent.name}'s installed CLI does not support ACP. Update it to a version that supports ${preset.command} ${preset.args}.`);
       }

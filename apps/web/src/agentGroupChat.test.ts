@@ -245,6 +245,7 @@ test("a Bot continues work only through an explicit handoff", async () => {
 test("a failed member is quarantined and its task is reassigned to a healthy member", async () => {
   const group = { name: "Team", members: [bot("A"), bot("B"), bot("C")] };
   const calls: string[] = [];
+  const failovers: { unavailableMemberIds: string[]; replacementMemberId: string }[] = [];
   const turns: { memberId: string; triggers: string[] }[] = [];
   let decisions = 0;
   const result = await runGroupConversation({ group, user: chatMessage("u", "@A do it", "user"),
@@ -258,6 +259,7 @@ test("a failed member is quarantined and its task is reassigned to a healthy mem
       turns.push({ memberId: member.id, triggers: turn.triggerMessageIds });
       return member.id === "A" ? { messages: [], failed: true } : [chatMessage("r", "done")];
     },
+    onFailover: (failover) => failovers.push(failover),
   });
   assert.deepEqual(calls, ["A", "B"]);
   assert.deepEqual(turns, [
@@ -265,6 +267,7 @@ test("a failed member is quarantined and its task is reassigned to a healthy mem
     { memberId: "B", triggers: ["u"] },
   ]);
   assert.equal(decisions, 1);
+  assert.deepEqual(failovers, [{ unavailableMemberIds: ["A"], replacementMemberId: "B" }]);
   assert.deepEqual(result, { limited: false, failed: false, unavailableMemberIds: ["A"] });
 });
 
