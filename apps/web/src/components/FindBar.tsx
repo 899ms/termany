@@ -1,3 +1,4 @@
+import { textInputProps } from "../textInputProps";
 import { useEffect, useRef, useState } from "react";
 import { useImeGuard } from "../imeGuard";
 import { clearSessionSearch, findInSession, focusSession, onSearchResults } from "../terminal/manager";
@@ -45,13 +46,10 @@ export function FindBar({ sessionId, onClose }: { sessionId: string; onClose: ()
         <SearchIcon />
       </span>
       <input
+        {...textInputProps}
         ref={inputRef}
         className={`find-bar-input ${misses ? "miss" : ""}`}
         autoFocus
-        autoCorrect="off"
-        autoComplete="off"
-        autoCapitalize="off"
-        spellCheck={false}
         placeholder="Find in terminal…"
         {...ime.props}
         value={query}

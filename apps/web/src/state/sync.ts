@@ -1,7 +1,7 @@
 import { apiPath } from "../api";
 import { demoState, isDemo } from "../demo";
 import { layoutHasPage, mergeLayout } from "./layoutMerge";
-import { activePageId, useStore, type Workspace } from "./store";
+import { activePageId, useStore, type AgentConversation, type UserProfile, type Workspace } from "./store";
 import { onTakenPagesChange, readWindowPref, takenPages, writeWindowPref } from "./windows";
 
 /**
@@ -117,6 +117,12 @@ export async function loadState(): Promise<void> {
       hydrated = true; // an empty-but-ok answer is a genuine fresh install
       const s = await res.json();
       if (typeof s.activeWorkspace === "string") sharedActive = s.activeWorkspace;
+      if (s.userProfile && typeof s.userProfile === "object" && typeof s.userProfile.nickname === "string") {
+        useStore.setState({ userProfile: s.userProfile });
+      }
+      if (Array.isArray(s.agentConversations) && s.agentConversations.length) {
+        useStore.setState({ agentConversations: s.agentConversations });
+      }
       if (Array.isArray(s.workspaces) && s.workspaces.length) {
         useStore.setState({ workspaces: s.workspaces });
         seedSidebar(s.sidebarCollapsed);
@@ -161,7 +167,12 @@ let scheduleSave: () => void = () => {};
  * belong to this window alone.
  */
 function applyRemoteState(payload: unknown): void {
-  const s = payload as { clientId?: string; workspaces?: Workspace[] } | null;
+  const s = payload as {
+    clientId?: string;
+    workspaces?: Workspace[];
+    agentConversations?: AgentConversation[];
+    userProfile?: UserProfile;
+  } | null;
   if (!s || s.clientId === clientId) return; // our own save, coming back around
   if (!Array.isArray(s.workspaces)) return;
   const remote = s.workspaces;
@@ -171,6 +182,12 @@ function applyRemoteState(payload: unknown): void {
   try {
     useStore.setState((state) => ({
       workspaces: mergeLayout(state.workspaces, remote, ownPage),
+      ...(Array.isArray(s.agentConversations) && s.agentConversations.length
+        ? { agentConversations: s.agentConversations }
+        : {}),
+      ...(s.userProfile && typeof s.userProfile.nickname === "string"
+        ? { userProfile: s.userProfile }
+        : {}),
     }));
   } finally {
     applyingRemote = false;
@@ -220,11 +237,11 @@ export function startStateSync(): void {
     timer = setTimeout(() => {
       // Never persist a layout we never loaded — see `hydrated`.
       if (!hydrated) return;
-      const { workspaces, activeWorkspace, sidebarCollapsed } = useStore.getState();
+      const { workspaces, agentConversations, userProfile, activeWorkspace, sidebarCollapsed } = useStore.getState();
       fetch(apiPath("/api/state"), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ clientId, workspaces, activeWorkspace, sidebarCollapsed }),
+        body: JSON.stringify({ clientId, workspaces, agentConversations, userProfile, activeWorkspace, sidebarCollapsed }),
       }).catch(() => {});
     }, 400);
   };

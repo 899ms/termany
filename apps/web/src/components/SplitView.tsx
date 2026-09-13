@@ -1,3 +1,4 @@
+import { textInputProps } from "../textInputProps";
 import { Fragment, useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { beginDragCursor, createDragGhost, endDragCursor } from "../dragGhost";
@@ -355,6 +356,7 @@ function PaneHeader({
           />
         ) : editing ? (
           <input
+            {...textInputProps}
             className="pane-head-rename"
             style={{ width: renameWidth }}
             autoFocus

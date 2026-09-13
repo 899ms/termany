@@ -1,3 +1,4 @@
+import { textInputProps } from "../textInputProps";
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { apiPath } from "../api";
@@ -189,6 +190,7 @@ export function SshConnections({
           onPointerDown={(event) => event.stopPropagation()}
         >
           <form
+            autoComplete="off"
             className="ssh-connect-form"
             onSubmit={(event) => {
               event.preventDefault();
@@ -197,13 +199,12 @@ export function SshConnections({
           >
             <SshIcon />
             <input
+              {...textInputProps}
               autoFocus
               value={target}
               onChange={(event) => setTarget(event.target.value)}
               placeholder={t("ssh.placeholder")}
               aria-label={t("ssh.destination")}
-              spellCheck={false}
-              autoCapitalize="none"
               disabled={savingTarget}
             />
           </form>
@@ -213,6 +214,7 @@ export function SshConnections({
               <TerminalIcon />
               {editingLocal ? (
                 <input
+                  {...textInputProps}
                   className="ssh-local-name-input"
                   autoFocus
                   value={localName}

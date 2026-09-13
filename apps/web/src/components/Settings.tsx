@@ -1,8 +1,10 @@
-import { Bot, Brain, Info, Keyboard, Palette } from "lucide-react";
+import { textInputProps } from "../textInputProps";
+import { Bot, Brain, Info, Keyboard, Palette, UserRound } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { apiPath } from "../api";
 import { isTauri } from "../env";
 import { LANGUAGES, useI18n, type Language } from "../i18n";
+import { useImeGuard } from "../imeGuard";
 import { openExternal, revealPath } from "../openExternal";
 import { type RailItemId } from "../rail-config";
 import { useStore } from "../state/store";
@@ -30,6 +32,7 @@ import {
 } from "../font-config";
 import { applyFontFamily, applyFontSize } from "../terminal/manager";
 import { AgentSettings } from "./AgentSettings";
+import { AgentAvatarEditor } from "./AgentIdentityFields";
 import {
   ActivityIcon,
   AgentIcon,
@@ -62,10 +65,11 @@ const ABOUT_LINKS = [
   { key: "feedback", url: `${REPO}/issues` },
 ] as const;
 
-export type SettingsSection = "general" | "appearance" | "models" | "agents" | "keyboard" | "about";
+export type SettingsSection = "profile" | "general" | "appearance" | "models" | "agents" | "keyboard" | "about";
 
 /** Left-nav entries, in display order. Labels come from i18n (settings.<id>). */
 const NAV_SECTIONS: { id: SettingsSection; icon: ReactNode }[] = [
+  { id: "profile", icon: <UserRound size={16} /> },
   { id: "general", icon: <GearIcon /> },
   { id: "appearance", icon: <Palette size={16} /> },
   { id: "models", icon: <Brain size={16} /> },
@@ -109,10 +113,12 @@ function isPresetFontFamily(family: string): boolean {
  */
 export function Settings({
   initialSection = "general",
+  initialAgentId,
   onClose,
   onSectionChange,
 }: {
   initialSection?: SettingsSection;
+  initialAgentId?: string;
   onClose: () => void;
   /** Reported so the panel can reopen where the user left it. */
   onSectionChange?: (section: SettingsSection) => void;
@@ -122,6 +128,12 @@ export function Settings({
   const setTheme = useStore((s) => s.setTheme);
   const railVisibility = useStore((s) => s.railVisibility);
   const setRailItemVisible = useStore((s) => s.setRailItemVisible);
+  const userProfile = useStore((s) => s.userProfile);
+  const setUserProfile = useStore((s) => s.setUserProfile);
+  const profileIme = useImeGuard();
+  const [profileNameDraft, setProfileNameDraft] = useState(userProfile.nickname);
+
+  useEffect(() => setProfileNameDraft(userProfile.nickname), [userProfile.nickname]);
 
   const [fontConfig, setFontConfig] = useState<FontConfig>(loadFontConfig);
   const [customFontFamily, setCustomFontFamily] = useState(
@@ -322,8 +334,41 @@ export function Settings({
         </aside>
 
         <div className="settings-body">
+          {section === "profile" && (
+            <>
+              <div className="settings-section-title">{t("settings.profile")}</div>
+              <div className="profile-settings-card">
+                <AgentAvatarEditor
+                  avatar={userProfile.avatar}
+                  fallback={<UserRound />}
+                  showReset={false}
+                  onAvatarChange={(avatar) => setUserProfile({ avatar })}
+                />
+                <label className="agent-setting-field profile-nickname-field">
+                  <span>{t("profile.nickname")}</span>
+                  <input
+                    {...textInputProps}
+                    {...profileIme.props}
+                    value={profileNameDraft}
+                    onFocus={(event) => event.currentTarget.select()}
+                    onChange={(event) => setProfileNameDraft(event.target.value)}
+                    onBlur={(event) => {
+                      const nickname = event.currentTarget.value.trim() || userProfile.nickname || "user";
+                      setProfileNameDraft(nickname);
+                      if (nickname !== userProfile.nickname) setUserProfile({ nickname });
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter" || profileIme.handled(event)) return;
+                      event.preventDefault();
+                      event.currentTarget.blur();
+                    }}
+                  />
+                </label>
+              </div>
+            </>
+          )}
           {section === "models" && <ModelSettings />}
-          {section === "agents" && <AgentSettings />}
+          {section === "agents" && <AgentSettings initialAgentId={initialAgentId} />}
           {section === "keyboard" && <KeyboardSettings />}
           {section === "general" && (
             <>
@@ -522,10 +567,10 @@ export function Settings({
               </div>
               {customFontFamily && (
                 <input
+                  {...textInputProps}
                   className="font-family-input"
                   type="text"
                   autoFocus
-                  spellCheck={false}
                   placeholder={DEFAULT_FONT_CONFIG.family}
                   value={fontConfig.family}
                   onChange={(e) => {

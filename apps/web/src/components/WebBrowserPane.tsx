@@ -1,3 +1,4 @@
+import { textInputProps } from "../textInputProps";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { isTauri } from "../env";
 import { isRectOccluded, subscribeOcclusionChanged } from "../nativeViewOcclusion";
@@ -258,7 +259,7 @@ export function WebBrowserPane({
 
   return (
     <div className="web-pane">
-      <form className="web-toolbar" onSubmit={submit}>
+      <form autoComplete="off" className="web-toolbar" onSubmit={submit}>
         <button
           className="web-nav-btn"
           type="button"
@@ -281,11 +282,11 @@ export function WebBrowserPane({
           <RefreshIcon />
         </button>
         <input
+          {...textInputProps}
           className="web-address"
           value={draftUrl}
           onChange={(e) => setDraftUrl(e.target.value)}
           onFocus={(e) => e.currentTarget.select()}
-          spellCheck={false}
         />
         <button className="web-nav-btn" type="button" title="Open in browser" onClick={openExternal}>
           <ExternalOpenIcon />
