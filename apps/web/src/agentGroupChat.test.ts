@@ -138,8 +138,12 @@ test("one ambiguous dispatch can choose an ordered multi-member sequence", async
   const calls: string[] = [];
   let decisions = 0;
   await runGroupConversation({ group, user: chatMessage("u", "Start", "user"), signal: new AbortController().signal,
-    decide: async () => {
+    decide: async (context) => {
       decisions++;
+      if (decisions > 1) {
+        assert.equal(context.completedTurns.length, 3);
+        return { mode: "none", memberIds: [], triggerMessageIds: [] };
+      }
       return { mode: "sequential", memberIds: ["A", "C", "A"], triggerMessageIds: ["u"] };
     },
     reply: async (member, turn, visible) => {
@@ -150,7 +154,34 @@ test("one ambiguous dispatch can choose an ordered multi-member sequence", async
     },
   });
   assert.deepEqual(calls, ["A", "C", "A"]);
-  assert.equal(decisions, 1);
+  assert.equal(decisions, 2);
+});
+
+test("the coordinator keeps supervising until a user-facing result is complete", async () => {
+  const group = { name: "Team", leadMemberId: "A", members: [bot("A"), bot("B")] };
+  const calls: string[] = [];
+  let decisions = 0;
+  const result = await runGroupConversation({ group, user: chatMessage("u", "Research and summarize", "user"),
+    signal: new AbortController().signal,
+    decide: async (context) => {
+      decisions++;
+      if (decisions === 1) return { mode: "single", memberIds: ["B"], triggerMessageIds: ["u"] };
+      if (decisions === 2) {
+        assert.deepEqual(context.completedTurns.map((turn) => turn.memberId), ["B"]);
+        return { mode: "single", memberIds: ["A"], triggerMessageIds: ["research"] };
+      }
+      assert.deepEqual(context.completedTurns.map((turn) => turn.memberId), ["B", "A"]);
+      return { mode: "none", memberIds: [], triggerMessageIds: [] };
+    },
+    reply: async (member, _turn, visible) => {
+      calls.push(member.id);
+      if (member.id === "A") assert.equal(visible.some((item) => item.id === "research"), true);
+      return [chatMessage(member.id === "B" ? "research" : "final", member.id === "B" ? "findings" : "final answer")];
+    },
+  });
+  assert.deepEqual(calls, ["B", "A"]);
+  assert.equal(decisions, 3);
+  assert.equal(result.failed, false);
 });
 
 test("@all runs members in parallel against the same transcript", async () => {
@@ -183,6 +214,63 @@ test("a Bot continues work only through an explicit handoff", async () => {
     },
   });
   assert.deepEqual(calls, ["A", "B"]);
+});
+
+test("a failed member is quarantined and its task is reassigned to a healthy member", async () => {
+  const group = { name: "Team", members: [bot("A"), bot("B"), bot("C")] };
+  const calls: string[] = [];
+  const turns: { memberId: string; triggers: string[] }[] = [];
+  const result = await runGroupConversation({ group, user: chatMessage("u", "@A do it", "user"),
+    signal: new AbortController().signal, decide: async () => assert.fail("explicit routing must bypass dispatch"),
+    reply: async (member, turn) => {
+      calls.push(member.id);
+      turns.push({ memberId: member.id, triggers: turn.triggerMessageIds });
+      return member.id === "A" ? { messages: [], failed: true } : [chatMessage("r", "done")];
+    },
+  });
+  assert.deepEqual(calls, ["A", "B"]);
+  assert.deepEqual(turns, [
+    { memberId: "A", triggers: ["u"] },
+    { memberId: "B", triggers: ["u"] },
+  ]);
+  assert.deepEqual(result, { limited: false, failed: false, unavailableMemberIds: ["A"] });
+});
+
+test("parallel failures are recovered sequentially without retrying quarantined members", async () => {
+  const group = { name: "Team", members: [bot("A"), bot("B"), bot("C")] };
+  const calls: string[] = [];
+  let activeRecoveries = 0;
+  let maxActiveRecoveries = 0;
+  const result = await runGroupConversation({ group, user: chatMessage("u", "@all do it", "user"),
+    signal: new AbortController().signal, decide: async () => assert.fail("@all must bypass dispatch"),
+    reply: async (member, _turn, visible) => {
+      calls.push(member.id);
+      if (calls.length <= 3) {
+        return member.id === "C" ? [chatMessage("c", "healthy result")] : { messages: [], failed: true };
+      }
+      assert.equal(visible.some((message) => message.id === "c"), true);
+      activeRecoveries++;
+      maxActiveRecoveries = Math.max(maxActiveRecoveries, activeRecoveries);
+      await Promise.resolve();
+      activeRecoveries--;
+      return [chatMessage(`recovery-${calls.length}`, "recovered")];
+    },
+  });
+  assert.deepEqual(calls, ["A", "B", "C", "C", "C"]);
+  assert.equal(maxActiveRecoveries, 1);
+  assert.deepEqual(result.unavailableMemberIds, ["A", "B"]);
+  assert.equal(result.failed, false);
+});
+
+test("the group fails only after every member is unavailable", async () => {
+  const group = { name: "Team", members: [bot("A"), bot("B"), bot("C")] };
+  const calls: string[] = [];
+  const result = await runGroupConversation({ group, user: chatMessage("u", "@A do it", "user"),
+    signal: new AbortController().signal, decide: async () => assert.fail("explicit routing must bypass dispatch"),
+    reply: async (member) => { calls.push(member.id); return { messages: [], failed: true }; },
+  });
+  assert.deepEqual(calls, ["A", "B", "C"]);
+  assert.deepEqual(result, { limited: false, failed: true, unavailableMemberIds: ["A", "B", "C"] });
 });
 
 test("the model may decide that no reply is appropriate", async () => {

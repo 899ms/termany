@@ -82,9 +82,12 @@ test("a model-selected sequence adds private deliveries to the planned recipient
   const user: AgentMessage = { id: "u", role: "user", content: "Start", createdAt: 1 };
   const privateMessages: AgentPrivateMessage[] = [];
   const calls: string[] = [];
+  let decisions = 0;
   await runGroupConversation({ group, user, signal: new AbortController().signal,
     decide: async (context) => {
       assert.doesNotMatch(JSON.stringify(context), /B-secret|human-secret/);
+      decisions++;
+      if (decisions > 1) return { mode: "none", memberIds: [], triggerMessageIds: [] };
       return { mode: "sequential", memberIds: ["A", "B", "C"], triggerMessageIds: ["u"] };
     }, reply: async (member, turn) => {
     calls.push(member.id);
@@ -101,6 +104,7 @@ test("a model-selected sequence adds private deliveries to the planned recipient
     return { messages: [], privateMessages: deliveries };
   } });
   assert.deepEqual(calls, ["A", "B", "C"]);
+  assert.equal(decisions, 2);
 });
 
 test("the model can continue a private-only exchange and then stop", async () => {

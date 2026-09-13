@@ -209,6 +209,7 @@ export default {
   "agentChat.send": "Отправить сообщение",
   "agentChat.stop": "Остановить ответ",
   "agentChat.copy": "Копировать",
+  "agentChat.reply": "Ответить",
   "agentChat.thinking": "Думает…",
   "agentChat.sending": "Отправка…",
   "agentChat.preparing": "Получено, подготовка…",

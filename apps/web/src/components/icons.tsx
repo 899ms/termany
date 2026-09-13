@@ -49,6 +49,7 @@ import {
   PinOff,
   Plus,
   RotateCw,
+  Reply,
   Search,
   SendHorizontal,
   Settings,
@@ -222,6 +223,10 @@ export function UnreadIcon() {
 
 export function MoreIcon() {
   return <Ellipsis {...base} />;
+}
+
+export function ReplyIcon() {
+  return <Reply {...base} />;
 }
 
 export function SendIcon() {

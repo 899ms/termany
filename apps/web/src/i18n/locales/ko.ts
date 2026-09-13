@@ -209,6 +209,7 @@ export default {
   "agentChat.send": "메시지 보내기",
   "agentChat.stop": "응답 중지",
   "agentChat.copy": "복사",
+  "agentChat.reply": "답장",
   "agentChat.thinking": "생각 중…",
   "agentChat.sending": "전송 중…",
   "agentChat.preparing": "수신했습니다. 준비 중…",

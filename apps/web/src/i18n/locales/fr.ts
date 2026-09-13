@@ -209,6 +209,7 @@ export default {
   "agentChat.send": "Envoyer le message",
   "agentChat.stop": "Arrêter la réponse",
   "agentChat.copy": "Copier",
+  "agentChat.reply": "Répondre",
   "agentChat.thinking": "Réflexion…",
   "agentChat.sending": "Envoi en cours…",
   "agentChat.preparing": "Reçu, préparation en cours…",

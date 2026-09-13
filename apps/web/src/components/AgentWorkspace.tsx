@@ -126,7 +126,6 @@ export function AgentWorkspace({ workspaceId, visible = true }: { workspaceId: s
   const setGroupLeadMember = useStore((s) => s.setAgentGroupLeadMember);
   const addTopic = useStore((s) => s.addAgentTopic);
   const setActiveTopic = useStore((s) => s.setActiveAgentTopic);
-  const setTopicMessages = useStore((s) => s.setAgentTopicMessages);
   const renameTopic = useStore((s) => s.renameAgentTopic);
   const deleteTopic = useStore((s) => s.deleteAgentTopic);
   const setConversationMeta = useStore((s) => s.setAgentConversationMeta);
@@ -564,12 +563,6 @@ export function AgentWorkspace({ workspaceId, visible = true }: { workspaceId: s
     const topicId = addTopic(active.id);
     if (topicId) {
       setActiveTopic(active.id, topicId);
-      setTopicMessages(active.id, topicId, [{
-        id: crypto.randomUUID(),
-        role: "assistant",
-        content: t("agentChat.title"),
-        createdAt: Date.now(),
-      }]);
     }
   };
 
@@ -1385,6 +1378,7 @@ export function AgentWorkspace({ workspaceId, visible = true }: { workspaceId: s
                         focused={visible && selected}
                         appearance="messenger"
                         botIdentity={{ name: displayTitle(conversation, t), description: conversation.agentDescription }}
+                        botLabels={conversation.agentTags}
                         peers={agentGroup ? [] : peersFor(conversation)}
                         group={agentGroup ? { name: displayTitle(conversation, t), description: conversation.agentDescription,
                           humanName: userProfile.nickname.trim() || "user",

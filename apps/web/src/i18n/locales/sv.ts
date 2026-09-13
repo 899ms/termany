@@ -209,6 +209,7 @@ export default {
   "agentChat.send": "Skicka meddelande",
   "agentChat.stop": "Stoppa svaret",
   "agentChat.copy": "Kopiera",
+  "agentChat.reply": "Svara",
   "agentChat.thinking": "Tänker…",
   "agentChat.sending": "Skickar…",
   "agentChat.preparing": "Mottaget, förbereder…",

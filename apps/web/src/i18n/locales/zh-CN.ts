@@ -209,6 +209,7 @@ export default {
   "agentChat.send": "发送消息",
   "agentChat.stop": "停止生成",
   "agentChat.copy": "复制",
+  "agentChat.reply": "回复",
   "agentChat.thinking": "思考中…",
   "agentChat.sending": "正在发送…",
   "agentChat.preparing": "已收到，正在准备…",

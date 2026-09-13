@@ -57,3 +57,47 @@ test("does not alter locale variables on Windows", () => {
     TERM: "xterm-256color",
   });
 });
+
+test("removes package-manager variables inherited from the development lifecycle", () => {
+  assert.deepEqual(
+    ptyEnvironment(
+      {
+        HOME: "/Users/test",
+        LANG: "en_US.UTF-8",
+        npm_lifecycle_event: "dev:server",
+        npm_lifecycle_script: "tsx watch src/index.ts",
+        npm_config_verify_deps_before_run: "false",
+        "npm_config_@jsr:registry": "https://npm.jsr.io/",
+        npm_package_name: "@termany/server",
+        npm_command: "run-script",
+        npm_execpath: "/path/to/pnpm.cjs",
+        npm_node_execpath: "/path/to/node",
+        PNPM_HOME: "/Users/test/Library/pnpm",
+      },
+      "darwin"
+    ),
+    {
+      HOME: "/Users/test",
+      LANG: "en_US.UTF-8",
+      PNPM_HOME: "/Users/test/Library/pnpm",
+      TERM: "xterm-256color",
+    }
+  );
+});
+
+test("keeps explicitly supplied npm config outside a package-manager lifecycle", () => {
+  assert.deepEqual(
+    ptyEnvironment(
+      {
+        LANG: "en_US.UTF-8",
+        npm_config_registry: "https://registry.example.com/",
+      },
+      "darwin"
+    ),
+    {
+      LANG: "en_US.UTF-8",
+      npm_config_registry: "https://registry.example.com/",
+      TERM: "xterm-256color",
+    }
+  );
+});

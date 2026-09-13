@@ -210,6 +210,7 @@ export default {
   "agentChat.send": "Odeslat zprávu",
   "agentChat.stop": "Zastavit odpověď",
   "agentChat.copy": "Kopírovat",
+  "agentChat.reply": "Odpovědět",
   "agentChat.thinking": "Přemýšlí…",
   "agentChat.sending": "Odesílání…",
   "agentChat.preparing": "Přijato, připravuji…",

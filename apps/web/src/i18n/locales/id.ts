@@ -209,6 +209,7 @@ export default {
   "agentChat.send": "Kirim pesan",
   "agentChat.stop": "Hentikan respons",
   "agentChat.copy": "Salin",
+  "agentChat.reply": "Balas",
   "agentChat.thinking": "Sedang berpikir…",
   "agentChat.sending": "Mengirim…",
   "agentChat.preparing": "Diterima, menyiapkan…",

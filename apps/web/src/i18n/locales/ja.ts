@@ -209,6 +209,7 @@ export default {
   "agentChat.send": "メッセージを送信",
   "agentChat.stop": "応答を停止",
   "agentChat.copy": "コピー",
+  "agentChat.reply": "返信",
   "agentChat.thinking": "考え中…",
   "agentChat.sending": "送信中…",
   "agentChat.preparing": "受信しました。準備中…",

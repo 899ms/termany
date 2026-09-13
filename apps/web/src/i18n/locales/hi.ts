@@ -210,6 +210,7 @@ export default {
   "agentChat.send": "संदेश भेजें",
   "agentChat.stop": "उत्तर रोकें",
   "agentChat.copy": "कॉपी करें",
+  "agentChat.reply": "जवाब दें",
   "agentChat.thinking": "सोच रहा है…",
   "agentChat.sending": "भेजा जा रहा है…",
   "agentChat.preparing": "प्राप्त हुआ, तैयारी जारी है…",

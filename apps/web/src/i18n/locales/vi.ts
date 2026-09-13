@@ -209,6 +209,7 @@ export default {
   "agentChat.send": "Gửi tin nhắn",
   "agentChat.stop": "Dừng phản hồi",
   "agentChat.copy": "Sao chép",
+  "agentChat.reply": "Trả lời",
   "agentChat.thinking": "Đang suy nghĩ…",
   "agentChat.sending": "Đang gửi…",
   "agentChat.preparing": "Đã nhận, đang chuẩn bị…",

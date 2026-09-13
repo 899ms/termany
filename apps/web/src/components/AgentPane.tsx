@@ -12,13 +12,14 @@ import {
   previousMessagePageStart,
 } from "../agentMessagePagination";
 import { agentMessagePromptContent, createAgentFileAttachment } from "../agentFileAttachments";
+import { agentGreetingPrompt, type GreetingBotProfile } from "../agentGreeting";
 import { agentToolDisplay, type AgentToolKind } from "../agentToolDisplay";
 import { splitAgentMessage as splitSteps } from "../agentMessagePreview";
 import { a2aInboxStreamingId, a2aReplyMessages, directA2ASessionId,
   directA2ASourcePrompt, directA2ATargetPrompt, parseA2AReply, type AgentA2AMessage } from "../agentA2A";
-import { addressesEveryone, groupConversationPrompt, groupControllerSessionId, groupLeadMember, groupMemberSessionId, groupMentionQuery, groupTopicPaneId, insertGroupMention, mentionedGroupMembers, runGroupConversation, type AgentGroup, type GroupMentionQuery, type GroupTurn, type GroupReply } from "../agentGroupChat";
+import { addressesEveryone, groupConversationPrompt, groupControllerSessionId, groupLeadMember, groupMemberSessionId, groupMentionQuery, groupTopicPaneId, insertGroupMention, mentionedGroupMembers, runGroupConversation, GROUP_MEMBER_INACTIVITY_TIMEOUT_MS, type AgentGroup, type GroupMentionQuery, type GroupTurn, type GroupReply } from "../agentGroupChat";
 import { agentConversationTopicSessionId, LEGACY_GROUP_TOPIC_ID } from "../agentGroupTopics";
-import { requestGroupDecision } from "../agentGroupDecision";
+import { requestGroupDecisionWithFailover } from "../agentGroupDecision";
 import { directReplyPrompt, parsePrivateReply, privateReplyDeliveries, type AgentPrivateMessage } from "../agentPrivateMessages";
 import { apiPath } from "../api";
 import { pastedChatImages, uploadChatImage } from "../chatImagePaste";
@@ -38,7 +39,7 @@ import {
 } from "../state/store";
 import { queueCommand } from "../terminal/manager";
 import { extractDroppedPaths, subscribeDesktopFileDrops } from "../terminal/desktopFileDrop";
-import { AgentIcon, AttachmentIcon, ChatIcon, CheckIcon, ChevronIcon, CloseIcon, CopyIcon, EditIcon, FolderIcon, PlusIcon, ReadIcon, SearchIcon, SendIcon, SpinnerIcon, StopIcon, TerminalIcon, ToolIcon } from "./icons";
+import { AgentIcon, AttachmentIcon, ChatIcon, ChevronIcon, CloseIcon, CopyIcon, EditIcon, FolderIcon, MoreIcon, PlusIcon, ReadIcon, ReplyIcon, SearchIcon, SendIcon, SpinnerIcon, StopIcon, TerminalIcon, ToolIcon, TrashIcon } from "./icons";
 import { Markdown } from "./Markdown";
 import { PopMenu } from "./PopMenu";
 import { AgentModelField } from "./AgentModelField";
@@ -83,19 +84,40 @@ function message(role: AgentMessage["role"], content: string): AgentMessage {
   return { id: crypto.randomUUID(), role, content, createdAt: Date.now() };
 }
 
+async function streamGreeting(response: Response, onText: (text: string) => void): Promise<string> {
+  if (!response.ok || !response.body) {
+    throw new Error((await response.text()) || `HTTP ${response.status}`);
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let text = "";
+  const consume = (line: string) => {
+    if (!line.trim()) return;
+    const event = JSON.parse(line) as { type?: string; text?: string; error?: string };
+    if (event.type === "delta" && event.text) text += event.text;
+    else if (event.type === "replace" && typeof event.text === "string") text = event.text;
+    else if (event.type === "error") throw new Error(event.error || "Greeting generation failed");
+    else return;
+    onText(text);
+  };
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) consume(line);
+    if (done) break;
+  }
+  if (buffer.trim()) consume(buffer);
+  return text.trim();
+}
+
 const imageRequestPayload = (attachments: AgentImageAttachment[] | undefined) =>
   attachments?.map(({ path, mimeType }) => ({ path, mimeType }));
 
 const imageSrc = (attachment: AgentImageAttachment) =>
   apiPath(`/api/fs/media?path=${encodeURIComponent(attachment.path)}`);
-
-/** Clock time for same-day replies, M/D HH:mm once the thread spans days. */
-function formatTime(at: number): string {
-  const stamp = new Date(at);
-  const clock = stamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
-  const sameDay = new Date().toDateString() === stamp.toDateString();
-  return sameDay ? clock : `${stamp.getMonth() + 1}/${stamp.getDate()} ${clock}`;
-}
 
 function sameCalendarDay(a: number, b: number): boolean {
   return new Date(a).toDateString() === new Date(b).toDateString();
@@ -261,11 +283,168 @@ function AgentSteps({
   );
 }
 
+function messageSummary(item: AgentMessage, t: Translate): string {
+  return item.content.trim() || item.files?.map((file) => file.name).join(", ") || item.error ||
+    t("agentChat.addAttachment");
+}
+
+type MessageMenuAnchor =
+  | { kind: "pointer"; x: number; y: number }
+  | { kind: "trigger"; left: number; right: number; top: number; bottom: number; align: "left" | "right" };
+
+function MessageMenu({
+  canCopy,
+  t,
+  onCopy,
+  onDelete,
+  onReply,
+}: {
+  canCopy: boolean;
+  t: Translate;
+  onCopy: () => void;
+  onDelete: () => void;
+  onReply: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [anchor, setAnchor] = useState<MessageMenuAnchor | null>(null);
+  const [panelPosition, setPanelPosition] = useState({ x: 0, y: 0 });
+  const rootRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const focusMenuRef = useRef(false);
+  const label = `${t("agentChat.copy")}, ${t("agentChat.reply")}, ${t("common.delete")}`;
+
+  const closeMenu = useCallback(() => {
+    setOpen(false);
+    setAnchor(null);
+  }, []);
+
+  // Right-clicking anywhere in the completed message bubble opens the same
+  // menu at the pointer. Keeping the listener here lets every bubble own its
+  // menu state without lifting transient UI state into the message list.
+  useEffect(() => {
+    const bubble = rootRef.current?.parentElement;
+    if (!bubble) return;
+    const openAtPointer = (event: MouseEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+      focusMenuRef.current = true;
+      setAnchor({ kind: "pointer", x: event.clientX, y: event.clientY });
+      setPanelPosition({ x: event.clientX, y: event.clientY });
+      setOpen(true);
+    };
+    bubble.addEventListener("contextmenu", openAtPointer);
+    return () => bubble.removeEventListener("contextmenu", openAtPointer);
+  }, []);
+
+  // A native context menu flips away from the viewport edges. Match that
+  // behavior after the panel has a measurable size.
+  useLayoutEffect(() => {
+    if (!open || !anchor || !panelRef.current) return;
+    const margin = 8;
+    const gap = 5;
+    const rect = panelRef.current.getBoundingClientRect();
+    const rawX = anchor.kind === "pointer"
+      ? anchor.x
+      : anchor.align === "left" ? anchor.left : anchor.right - rect.width;
+    const below = anchor.kind === "pointer" ? anchor.y : anchor.bottom + gap;
+    const above = anchor.kind === "pointer" ? anchor.y - rect.height : anchor.top - rect.height - gap;
+    const x = Math.max(margin, Math.min(rawX, window.innerWidth - rect.width - margin));
+    const y = below + rect.height <= window.innerHeight - margin
+      ? below
+      : Math.max(margin, above);
+    setPanelPosition((current) => current.x === x && current.y === y ? current : { x, y });
+  }, [anchor, open]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (focusMenuRef.current) {
+      panelRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus();
+      focusMenuRef.current = false;
+    }
+    const closeOutside = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (!rootRef.current?.contains(target) && !panelRef.current?.contains(target)) closeMenu();
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.stopPropagation();
+      closeMenu();
+      triggerRef.current?.focus();
+    };
+    window.addEventListener("pointerdown", closeOutside);
+    window.addEventListener("keydown", closeOnEscape, true);
+    window.addEventListener("resize", closeMenu);
+    window.addEventListener("scroll", closeMenu, true);
+    return () => {
+      window.removeEventListener("pointerdown", closeOutside);
+      window.removeEventListener("keydown", closeOnEscape, true);
+      window.removeEventListener("resize", closeMenu);
+      window.removeEventListener("scroll", closeMenu, true);
+    };
+  }, [closeMenu, open]);
+
+  const choose = (action: () => void) => {
+    closeMenu();
+    action();
+  };
+
+  return (
+    <div className={`agent-message-menu ${open ? "open" : ""}`} ref={rootRef}>
+      <button
+        ref={triggerRef}
+        type="button"
+        className="agent-message-menu-trigger"
+        title={label}
+        aria-label={label}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={(event) => {
+          focusMenuRef.current = event.detail === 0;
+          if (open) {
+            closeMenu();
+            return;
+          }
+          const rect = event.currentTarget.getBoundingClientRect();
+          const align = rootRef.current?.closest(".agent-message-user") ? "left" : "right";
+          setAnchor({
+            kind: "trigger",
+            left: rect.left,
+            right: rect.right,
+            top: rect.top,
+            bottom: rect.bottom,
+            align,
+          });
+          setPanelPosition({ x: rect.left, y: rect.bottom + 5 });
+          setOpen(true);
+        }}
+      >
+        <MoreIcon />
+      </button>
+      {open && createPortal(<div
+        ref={panelRef}
+        className="agent-message-menu-panel"
+        role="menu"
+        style={{ left: panelPosition.x, top: panelPosition.y }}
+      >
+        <button type="button" role="menuitem" disabled={!canCopy}
+          onClick={() => choose(onCopy)}><CopyIcon /><span>{t("agentChat.copy")}</span></button>
+        <button type="button" role="menuitem"
+          onClick={() => choose(onReply)}><ReplyIcon /><span>{t("agentChat.reply")}</span></button>
+        <div className="agent-message-menu-separator" />
+        <button type="button" role="menuitem" className="danger"
+          onClick={() => choose(onDelete)}><TrashIcon /><span>{t("common.delete")}</span></button>
+      </div>, document.body)}
+    </div>
+  );
+}
+
 export function AgentPane({
   leaf,
   focused = false,
   appearance = "pane",
   botIdentity,
+  botLabels,
   modelSettingsContainer,
   group,
   peers = [],
@@ -276,19 +455,21 @@ export function AgentPane({
   focused?: boolean;
   appearance?: "pane" | "messenger";
   botIdentity?: BotIdentity;
+  botLabels?: string;
   modelSettingsContainer?: HTMLElement | null;
   group?: AgentGroup;
   peers?: AgentConversation[];
   topicId?: string;
   onStreamingChange?: (paneId: string, streaming: boolean) => void;
 }) {
-  const { t } = useI18n();
+  const { language, t } = useI18n();
   const setAgentMessages = useStore((s) => s.setAgentMessages);
   const setAgentTopicMessages = useStore((s) => s.setAgentTopicMessages);
   const setAgentModel = useStore((s) => s.setAgentModel);
   const setAgentConfigOption = useStore((s) => s.setAgentConfigOption);
   const setAgentRuntime = useStore((s) => s.setAgentRuntime);
   const setAgentCwd = useStore((s) => s.setAgentCwd);
+  const setAgentGroupLeadMember = useStore((s) => s.setAgentGroupLeadMember);
   const addPane = useStore((s) => s.addPane);
   const agents = useAgentConfigs();
   const mentionMembers = group?.members ?? peers;
@@ -310,8 +491,7 @@ export function AgentPane({
   const [groupPlanning, setGroupPlanning] = useState<{ startedAt: number } | null>(null);
   const [groupError, setGroupError] = useState(false);
   const [permissions, setPermissions] = useState<PendingPermission[]>([]);
-  const [copied, setCopied] = useState("");
-  const [messageActionsId, setMessageActionsId] = useState("");
+  const [replyingTo, setReplyingTo] = useState<NonNullable<AgentMessage["replyTo"]> | null>(null);
   const [cwdInfo, setCwdInfo] = useState<{ cwd: string; home: string } | null>(null);
   const [picking, setPicking] = useState(false);
   /** null until a model control is first opened — see loadAcpConfig. */
@@ -322,6 +502,7 @@ export function AgentPane({
   const [modelHelp, setModelHelp] = useState(false);
   const modelHelpBackdropRef = useNativeOccluder<HTMLDivElement>("agent-models-help", modelHelp);
   const abortRef = useRef<AbortController | null>(null);
+  const greetingAttemptsRef = useRef(new Set<string>());
   const streamingRef = useRef(false);
   const ime = useImeGuard();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -371,6 +552,8 @@ export function AgentPane({
     onStreamingChange?.(runtimePaneId, streaming);
     return () => onStreamingChange?.(runtimePaneId, false);
   }, [runtimePaneId, streaming, onStreamingChange]);
+
+  useEffect(() => setReplyingTo(null), [runtimePaneId]);
 
   useEffect(() => {
     if (!focused) return;
@@ -711,12 +894,12 @@ export function AgentPane({
       ? selectedModel.slice(selectedModel.indexOf("/") + 1)
       : t("agentChat.modelNone");
 
-  const persist = (next: AgentMessage[]) => {
+  const persist = (next: AgentMessage[], removedMessageIds: readonly string[] = []) => {
     messagesRef.current = next;
     setMessages(next);
     const saved = next.filter((item) => !pendingIdsRef.current.has(item.id));
     if (topicId) setAgentTopicMessages(leaf.id, topicId, saved);
-    else setAgentMessages(leaf.id, saved);
+    else setAgentMessages(leaf.id, saved, removedMessageIds);
   };
 
   const display = (update: (current: AgentMessage[]) => AgentMessage[]) => {
@@ -737,10 +920,142 @@ export function AgentPane({
     }
   };
 
+  useEffect(() => {
+    if (
+      appearance !== "messenger" ||
+      !focused ||
+      !topicId ||
+      models === null ||
+      !canSubmit ||
+      streamingRef.current ||
+      messagesRef.current.length > 0 ||
+      greetingAttemptsRef.current.has(runtimePaneId)
+    ) return;
+
+    const speaker = group ? leadMember : undefined;
+    if (group && !speaker) return;
+    greetingAttemptsRef.current.add(runtimePaneId);
+
+    const profile: GreetingBotProfile = speaker
+      ? {
+          id: speaker.id,
+          name: speaker.title,
+          description: speaker.agentDescription,
+          labels: speaker.agentTags,
+        }
+      : {
+          id: leaf.id,
+          name: botIdentity?.name ?? leaf.title,
+          description: botIdentity?.description,
+          labels: botLabels,
+        };
+    const prompt = agentGreetingPrompt({
+      bot: profile,
+      language,
+      group: group
+        ? {
+            name: group.name,
+            description: group.description,
+            humanName: group.humanName,
+            members: group.members.map((member) => ({
+              id: member.id,
+              name: member.title,
+              description: member.agentDescription,
+              labels: member.agentTags,
+            })),
+          }
+        : undefined,
+    });
+    const assistant = message("assistant", "");
+    if (speaker) assistant.sender = { id: speaker.id, name: speaker.title };
+    const startedAt = Date.now();
+    const abort = new AbortController();
+    abortRef.current = abort;
+    streamingRef.current = true;
+    setStreaming(true);
+    pendingIdsRef.current.add(assistant.id);
+    setPendingReplies((current) => ({ ...current, [assistant.id]: "greeting" }));
+    display((current) => [...current, assistant]);
+
+    const endpoint = selectedRuntime ? "/api/agent/acp/chat" : "/api/agent/chat";
+    const identity = { name: profile.name, description: profile.description };
+    const body = selectedRuntime
+      ? {
+          paneId: speaker ? groupMemberSessionId(leaf.id, speaker.id, topicId) : runtimePaneId,
+          agentId: selectedRuntime,
+          cwd: runtimeOwner.agentCwd || undefined,
+          cwdFrom: cwdCandidates(useStore.getState(), runtimeOwner.id).join(","),
+          config: acpPicks,
+          ...(speaker ? { applySavedConfig: true } : {}),
+          prompt,
+          botIdentity: identity,
+        }
+      : {
+          model: selectedModel || undefined,
+          messages: [{ role: "user", content: prompt }],
+          botIdentity: identity,
+        };
+
+    void (async () => {
+      try {
+        const response = await fetch(apiPath(endpoint), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: abort.signal,
+          body: JSON.stringify(body),
+        });
+        const content = await streamGreeting(response, (partial) => {
+          replaceReply(assistant.id, [{ ...assistant, content: partial }]);
+        });
+        if (!content) throw new Error("Greeting generation returned no text");
+        pendingIdsRef.current.delete(assistant.id);
+        replaceReply(assistant.id, [{
+          ...assistant,
+          content: content.slice(0, 1_000),
+          durationMs: Date.now() - startedAt,
+          openingGreeting: true,
+        }], true);
+      } catch {
+        pendingIdsRef.current.delete(assistant.id);
+        replaceReply(assistant.id, [], true);
+      } finally {
+        setPendingReplies((current) => {
+          if (!(assistant.id in current)) return current;
+          const next = { ...current };
+          delete next[assistant.id];
+          return next;
+        });
+        if (abortRef.current === abort) {
+          abortRef.current = null;
+          streamingRef.current = false;
+          setStreaming(false);
+        }
+      }
+    })();
+  }, [
+    appearance,
+    focused,
+    topicId,
+    models,
+    canSubmit,
+    runtimePaneId,
+    group,
+    leadMember,
+    leaf,
+    botIdentity,
+    botLabels,
+    language,
+    selectedRuntime,
+    runtimeOwner,
+    acpPicks,
+    selectedModel,
+  ]);
+
   const submit = async () => {
     const content = draft.trim();
     if ((!content && !draftImages.length && !draftFiles.length) || streamingRef.current || configRequestRef.current || attachmentRequestRef.current || !canSubmit) return;
     const user = message("user", content);
+    if (replyingTo) user.replyTo = { ...replyingTo };
     if (draftImages.length) user.attachments = draftImages.map((image) => ({ ...image }));
     if (draftFiles.length) user.files = draftFiles.map((file) => ({ ...file }));
     const promptContent = agentMessagePromptContent(user);
@@ -757,6 +1072,7 @@ export function AgentPane({
     setGroupLimited(false);
     setGroupError(false);
     setDraft("");
+    setReplyingTo(null);
     setDraftImages([]);
     setDraftFiles([]);
     setPermissions([]);
@@ -804,6 +1120,22 @@ export function AgentPane({
       let rawText = "";
       let failure = "";
       const parts: AgentPart[] = [];
+      const attemptAbort = group && member ? new AbortController() : null;
+      let attemptTimedOut = false;
+      let inactivityTimer: ReturnType<typeof setTimeout> | undefined;
+      const forwardAbort = () => attemptAbort?.abort(abort.signal.reason);
+      const resetInactivityTimer = () => {
+        if (!attemptAbort) return;
+        if (inactivityTimer) clearTimeout(inactivityTimer);
+        inactivityTimer = setTimeout(() => {
+          attemptTimedOut = true;
+          attemptAbort.abort(new DOMException("Group member response timed out", "TimeoutError"));
+        }, GROUP_MEMBER_INACTIVITY_TIMEOUT_MS);
+      };
+      if (attemptAbort) {
+        abort.signal.addEventListener("abort", forwardAbort, { once: true });
+        resetInactivityTimer();
+      }
       const hasTools = () => parts.some((part) => part.kind === "tool");
       const draftReply = (): AgentMessage => ({
         ...assistant,
@@ -818,7 +1150,7 @@ export function AgentPane({
         const response = await fetch(apiPath(replyRuntime ? "/api/agent/acp/chat" : "/api/agent/chat"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          signal: abort.signal,
+          signal: attemptAbort?.signal ?? abort.signal,
           body: JSON.stringify(
             replyRuntime
               ? {
@@ -838,7 +1170,7 @@ export function AgentPane({
                     : peers.length ? [...history.slice(0, -1).map(({ role, content: body, attachments, files }) => ({
                         role, content: agentMessagePromptContent({ content: body, files }), images: imageRequestPayload(attachments),
                       })), { role: "user", content: replyPrompt, images: imageRequestPayload(user.attachments) }]
-                    : history.map(({ role, content: body, attachments, files }) => ({
+                    : history.filter((item) => !item.openingGreeting).map(({ role, content: body, attachments, files }) => ({
                         role, content: agentMessagePromptContent({ content: body, files }), images: imageRequestPayload(attachments),
                       })),
                   botIdentity: replyIdentity,
@@ -849,6 +1181,7 @@ export function AgentPane({
           throw new Error((await response.text()) || `HTTP ${response.status}`);
         }
         // Headers acknowledge receipt even while the runtime or model is still starting.
+        resetInactivityTimer();
         updatePhase(replyRuntime ? "preparing" : "processing");
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
@@ -860,6 +1193,7 @@ export function AgentPane({
           buffer = lines.pop() ?? "";
           for (const line of lines) {
             if (!line.trim()) continue;
+            resetInactivityTimer();
             const event = JSON.parse(line) as {
               type: string;
               text?: string;
@@ -942,6 +1276,9 @@ export function AgentPane({
             } else if (event.type === "done" && event.model && !member && !leaf.agentModel) {
               setAgentModel(leaf.id, event.model);
             } else if (event.type === "permission" && event.requestId) {
+              if (group && member) {
+                throw new Error(t("agentGroup.memberUnavailable", { name: member.title }));
+              }
               const nextPermission = {
                 paneId: replyPaneId,
                 requestId: event.requestId,
@@ -971,9 +1308,13 @@ export function AgentPane({
         }
       } catch (cause) {
         if (!abort.signal.aborted) {
-          failure = cause instanceof Error ? cause.message : String(cause);
+          failure = attemptTimedOut && member
+            ? t("agentGroup.memberUnavailable", { name: member.title })
+            : cause instanceof Error ? cause.message : String(cause);
         }
       } finally {
+        if (inactivityTimer) clearTimeout(inactivityTimer);
+        abort.signal.removeEventListener("abort", forwardAbort);
         if (privateMessages.length && !failure && !abort.signal.aborted) {
           useStore.getState().deliverAgentPrivateMessages(leaf.id, privateMessages);
         } else privateMessages = [];
@@ -1005,24 +1346,46 @@ export function AgentPane({
     };
     try {
       if (group) {
+        let coordinator = leadMember;
+        const unavailableCoordinators = new Set<string>();
         const result = await runGroupConversation({ group, user, history, signal: abort.signal, reply,
           privateMessages: topicPrivateMessages(),
           decide: async (context) => {
             setGroupPlanning({ startedAt: Date.now() });
             try {
-              return await requestGroupDecision({ group, context, signal: abort.signal,
-                endpoint: apiPath(selectedRuntime ? "/api/agent/acp/chat" : "/api/agent/chat"),
-                target: { paneId: groupControllerSessionId(leaf.id, topicId), agentId: selectedRuntime || undefined,
-                  model: selectedModel || undefined, config: acpPicks, cwd: leadMember?.agentCwd || undefined,
-                  cwdFrom: cwdCandidates(useStore.getState(), leadMember?.id ?? leaf.id).join(","),
-                  images: imageRequestPayload(user.attachments) },
+              const coordinators = [coordinator, ...group.members.filter((member) =>
+                member.id !== coordinator?.id && !unavailableCoordinators.has(member.id))]
+                .filter((member): member is AgentConversation =>
+                  member !== undefined && !unavailableCoordinators.has(member.id));
+              const outcome = await requestGroupDecisionWithFailover({ group, context, signal: abort.signal,
+                candidates: coordinators.map((member) => {
+                  const configured = member.agentRuntime;
+                  const runtime = configured === undefined ? runtimes[0]?.id ?? "" : configured;
+                  return {
+                    member,
+                    endpoint: apiPath(runtime ? "/api/agent/acp/chat" : "/api/agent/chat"),
+                    target: { paneId: groupControllerSessionId(leaf.id, topicId), agentId: runtime || undefined,
+                      model: member.agentModel || models?.defaultModel || undefined,
+                      config: runtime ? member.agentConfig?.[runtime] ?? {} : undefined,
+                      cwd: member.agentCwd || undefined,
+                      cwdFrom: cwdCandidates(useStore.getState(), member.id).join(","),
+                      images: imageRequestPayload(user.attachments) },
+                  };
+                }),
               });
+              outcome.failedMemberIds.forEach((memberId) => unavailableCoordinators.add(memberId));
+              coordinator = outcome.leader;
+              if (outcome.failedMemberIds.length && outcome.leader.id !== leadMember?.id) {
+                setAgentGroupLeadMember(leaf.id, outcome.leader.id);
+              }
+              return outcome.decision;
             } finally {
               setGroupPlanning(null);
             }
           },
         });
         setGroupLimited(result.limited);
+        setGroupError(result.failed);
       } else {
         const deliveries = (await reply(null)).a2aMessages ?? [];
         for (const delivery of deliveries) {
@@ -1112,12 +1475,18 @@ export function AgentPane({
   const copyMessage = async (item: AgentMessage) => {
     try {
       await navigator.clipboard.writeText(item.content);
-      setCopied(item.id);
-      // Flip the icon back so a second copy of the same message still reads as one.
-      window.setTimeout(() => setCopied((current) => (current === item.id ? "" : current)), 1400);
     } catch {
-      // Clipboard denied (insecure origin / no permission) — leave the icon as is.
+      // Clipboard denied (insecure origin / no permission) — leave the message unchanged.
     }
+  };
+  const replyToMessage = (item: AgentMessage) => {
+    setReplyingTo({ id: item.id, content: messageSummary(item, t).slice(0, 4_000) });
+    requestAnimationFrame(() => textareaRef.current?.focus({ preventScroll: true }));
+  };
+  const deleteMessage = (item: AgentMessage) => {
+    const next = messagesRef.current.filter((message) => message.id !== item.id);
+    if (replyingTo?.id === item.id) setReplyingTo(null);
+    persist(next, [item.id]);
   };
   /** Run a code block from a reply in a fresh terminal pane, in the same
    *  folder the agent works in (explicit pick first, else the inherited cwd). */
@@ -1177,16 +1546,6 @@ export function AgentPane({
     <div
       ref={paneRef}
       className={`agent-pane agent-pane-${appearance} ${empty ? "agent-pane-empty" : ""} ${group ? "agent-pane-group" : ""} ${attachmentDragOver ? "agent-pane-attachment-drag-over" : ""}`}
-      onFocusCapture={(event) => {
-        const row = (event.target as HTMLElement).closest<HTMLElement>("[data-message-actions-id]");
-        setMessageActionsId(row?.dataset.messageActionsId ?? "");
-      }}
-      onPointerMove={(event) => {
-        const row = (event.target as HTMLElement).closest<HTMLElement>("[data-message-actions-id]");
-        const next = row?.dataset.messageActionsId ?? "";
-        setMessageActionsId((current) => current === next ? current : next);
-      }}
-      onPointerLeave={() => setMessageActionsId("")}
       onDragEnter={(event) => {
         if (streaming || !event.dataTransfer.types.includes("Files")) return;
         event.preventDefault();
@@ -1217,14 +1576,9 @@ export function AgentPane({
         <span>{t("agentChat.addAttachment")}</span>
       </div>}
       <div className="agent-thread" ref={threadRef} aria-live="polite" onScroll={onThreadScroll}>
-        {empty ? (
-          !group && <div className="agent-welcome">
-            <h2>{t("agentChat.title")}</h2>
-          </div>
-        ) : (
+        {empty ? null : (
           <div className="agent-messages" ref={messageListRef}>
             {visibleMessages.map((item, index) => {
-              const messageActionId = `${item.id}:${index}`;
               const continuation = sameReplyGroup(visibleMessages[index - 1], item);
               const continues = sameReplyGroup(item, visibleMessages[index + 1]);
               const pendingPhase = pendingReplies[item.id];
@@ -1258,12 +1612,20 @@ export function AgentPane({
                       <AgentSteps item={item} steps={steps} running={running} t={t} onRun={(code) => runSnippet(code, speaker)} />
                     )}
                     {(hasVisibleBody || ((item.content || item.attachments?.length || item.files?.length) && !running)) && (
-                      <div
-                        className="agent-message-bubble-row"
-                        data-message-actions-id={messageActionId}
-                      >
+                      <div className="agent-message-bubble-row">
                         {hasVisibleBody && (
                           <div className="agent-message-content">
+                            {!running && <MessageMenu
+                              canCopy={Boolean(item.content)}
+                              t={t}
+                              onCopy={() => void copyMessage(item)}
+                              onReply={() => replyToMessage(item)}
+                              onDelete={() => deleteMessage(item)}
+                            />}
+                            {item.replyTo && <div className="agent-message-reply-quote">
+                              <strong>{t("agentChat.reply")}</strong>
+                              <span>{item.replyTo.content}</span>
+                            </div>}
                             {item.attachments?.length ? <div className="agent-message-images">
                               {item.attachments.map((image) => (
                                 <img key={image.id} src={imageSrc(image)} alt="" />
@@ -1285,20 +1647,6 @@ export function AgentPane({
                             {item.error && <div className="agent-message-error">{item.error}</div>}
                           </div>
                         )}
-                        {(item.content || item.attachments?.length || item.files?.length) && !running &&
-                          messageActionsId === messageActionId && (
-                            <div className="agent-message-actions">
-                              {item.content && <button
-                                className="agent-message-action"
-                                title={t("agentChat.copy")}
-                                aria-label={t("agentChat.copy")}
-                                onClick={() => void copyMessage(item)}
-                              >
-                                {copied === item.id ? <CheckIcon /> : <CopyIcon />}
-                              </button>}
-                              <span className="agent-message-time">{formatTime(item.createdAt)}</span>
-                            </div>
-                          )}
                       </div>
                     )}
                     {item.botDeliveries?.length ? <div className="agent-bot-deliveries">
@@ -1401,7 +1749,12 @@ export function AgentPane({
         {attachmentError && <div className="agent-attachment-error" role="alert">{t("agentChat.attachmentError")}</div>}
         {groupError && <div className="agent-attachment-error" role="alert">{t("agentGroup.routingError")}</div>}
         {groupLimited && <div className="agent-group-notice" role="status">{t("agentGroup.roundLimit")}</div>}
-        <div className="agent-composer" ref={composerRef} data-images={draftImages.length || draftFiles.length ? "true" : "false"}>
+        <div
+          className="agent-composer"
+          ref={composerRef}
+          data-images={draftImages.length || draftFiles.length ? "true" : "false"}
+          data-reply={replyingTo ? "true" : "false"}
+        >
           {mentionMembers.length > 0 && mention && !streaming && <AgentGroupMentions
             ref={mentionsRef} id={mentionsId} query={mention.query} members={mentionMembers}
             getMemberIcon={memberRuntimeIcon}
@@ -1435,6 +1788,13 @@ export function AgentPane({
                 </button>
               </span>
             ))}
+          </div>}
+          {replyingTo && <div className="agent-composer-reply" aria-label={t("agentChat.reply")}>
+            <div className="agent-composer-reply-copy">
+              <Markdown text={replyingTo.content} inline />
+            </div>
+            <button type="button" title={t("common.cancel")} aria-label={t("common.cancel")}
+              disabled={streaming} onClick={() => setReplyingTo(null)}><CloseIcon /></button>
           </div>}
           <div className="agent-composer-options" ref={optionsRootRef}>
             <button

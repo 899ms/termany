@@ -27,8 +27,15 @@ export interface GroupReply {
   failed?: boolean;
 }
 
+export interface GroupConversationResult {
+  limited: boolean;
+  failed: boolean;
+  unavailableMemberIds: string[];
+}
+
 // Execution guard only; the model decides when the conversation is complete.
 export const GROUP_MAX_TURNS = 24;
+export const GROUP_MEMBER_INACTIVITY_TIMEOUT_MS = 90_000;
 export const GROUP_MESSAGE_BREAK = AGENT_MESSAGE_BREAK;
 
 /** Exclude code, quoted replies, links and email addresses from mention labels. */
@@ -111,6 +118,7 @@ export interface GroupDecisionContext {
   messages: AgentMessage[];
   privateDeliveries: Omit<AgentPrivateMessage, "content">[];
   completedTurns: (GroupTurn & { memberId: string; messageIds: string[]; privateMessageIds: string[] })[];
+  unavailableMemberIds?: string[];
 }
 
 /** Validate the transport contract, never infer a recipient or a fallback.
@@ -192,9 +200,9 @@ function handoffsFrom(
   return [...triggers].map(([memberId, ids]) => ({ memberId, triggerMessageIds: [...ids] }));
 }
 
-/** Explicit mentions bypass the controller. Ambiguous messages use it once to
- * choose single, parallel or sequential execution; subsequent work continues
- * only through explicit public/private Bot handoffs. */
+/** Explicit mentions bypass the controller. Ambiguous tasks remain supervised:
+ * after explicit public/private handoffs settle, the coordinator checks shared
+ * progress and either schedules the next step or declares the task complete. */
 export async function runGroupConversation({ group, user, history = [], privateMessages = [], signal, decide, reply, maxTurns = GROUP_MAX_TURNS }: {
   group: AgentGroup;
   user: AgentMessage;
@@ -204,34 +212,43 @@ export async function runGroupConversation({ group, user, history = [], privateM
   decide: (context: GroupDecisionContext) => Promise<unknown>;
   reply: (member: AgentConversation, turn: GroupTurn, messages: AgentMessage[]) => Promise<AgentMessage[] | GroupReply>;
   maxTurns?: number;
-}): Promise<{ limited: boolean }> {
+}): Promise<GroupConversationResult> {
+  const finish = (limited = false, failed = false, unavailable = new Set<string>()): GroupConversationResult => ({
+    limited, failed, unavailableMemberIds: [...unavailable],
+  });
+  const unavailable = new Set<string>();
   const envelope = ({ id, sender, recipient, createdAt }: AgentPrivateMessage) => ({ id, sender, recipient, createdAt });
   const context: GroupDecisionContext = {
     messages: [...history.filter((message) => message.id !== user.id), user],
     privateDeliveries: privateMessages.map(envelope),
     completedTurns: [],
+    unavailableMemberIds: [],
+  };
+  const quarantine = (memberId: string) => {
+    unavailable.add(memberId);
+    context.unavailableMemberIds = [...unavailable];
   };
   let decision = explicitGroupDecision(user.content, group, user.id);
+  const supervised = !decision;
   if (!decision) {
     const raw = await decide({ ...context, messages: [...context.messages],
       privateDeliveries: [...context.privateDeliveries], completedTurns: [] });
-    if (signal.aborted) return { limited: false };
+    if (signal.aborted) return finish();
     decision = validateGroupDecision(raw, group, context);
   }
-  if (decision.mode === "none") return { limited: false };
+  if (decision.mode === "none") return finish();
 
   let pending = decision.memberIds.map((memberId) => ({ memberId, triggerMessageIds: decision!.triggerMessageIds }));
   let mode = decision.mode;
   while (pending.length && !signal.aborted) {
     const remaining = maxTurns - context.completedTurns.length;
-    if (remaining <= 0) return { limited: true };
+    if (remaining <= 0) return finish(true, false, unavailable);
     const batch = pending.slice(0, remaining);
     const truncated = batch.length < pending.length;
     const scheduled = new Set(batch.map((item) => item.memberId));
     const batchMessages: AgentMessage[] = [];
     const batchDeliveries: AgentPrivateMessage[] = [];
-    const execute = async (item: typeof batch[number], index: number, visible: AgentMessage[]) => {
-      const member = group.members.find((candidate) => candidate.id === item.memberId)!;
+    const execute = async (item: typeof batch[number], index: number, visible: AgentMessage[], member: AgentConversation) => {
       const turn = { round: context.completedTurns.length + index + 1, triggerMessageIds: item.triggerMessageIds };
       const rawOutcome = await reply(member, turn, visible);
       const outcome = Array.isArray(rawOutcome) ? { messages: rawOutcome } : rawOutcome;
@@ -249,22 +266,69 @@ export async function runGroupConversation({ group, user, history = [], privateM
       batchDeliveries.push(...deliveries);
       return true;
     };
+    const candidatesFor = (memberId: string, attempted = new Set<string>()) => {
+      const preferred = group.members.find((member) => member.id === memberId);
+      return [...(preferred ? [preferred] : []), ...group.members.filter((member) => member.id !== memberId)]
+        .filter((member) => !unavailable.has(member.id) && !attempted.has(member.id));
+    };
+    const executeWithFailover = async (item: typeof batch[number], index: number, visible: AgentMessage[],
+      initial?: Awaited<ReturnType<typeof execute>>) => {
+      const attempted = new Set<string>();
+      let result = initial;
+      if (result) {
+        attempted.add(result.member.id);
+        if (!result.outcome.failed) return result;
+        quarantine(result.member.id);
+      }
+      while (!signal.aborted) {
+        const member = candidatesFor(item.memberId, attempted)[0];
+        if (!member) return result;
+        attempted.add(member.id);
+        result = await execute(item, index, visible, member);
+        if (!result.outcome.failed) return result;
+        quarantine(member.id);
+      }
+      return result;
+    };
 
     if (mode === "parallel") {
       const visible = [...context.messages];
-      const results = await Promise.all(batch.map((item, index) => execute(item, index, visible)));
-      if (signal.aborted) return { limited: false };
-      for (const result of results) if (!record(result)) return { limited: false };
+      const initial = await Promise.all(batch.map((item, index) => {
+        const member = group.members.find((candidate) => candidate.id === item.memberId)!;
+        return execute(item, index, visible, member);
+      }));
+      if (signal.aborted) return finish(false, false, unavailable);
+      // Quarantine every failed primary before choosing replacements. Recovery
+      // is sequential so one healthy member session is never used concurrently.
+      for (const result of initial) if (result.outcome.failed) quarantine(result.member.id);
+      for (const result of initial) {
+        if (result.outcome.failed) continue;
+        record(result);
+        scheduled.add(result.member.id);
+      }
+      let unrecovered = false;
+      for (let index = 0; index < initial.length; index++) {
+        const first = initial[index];
+        if (!first.outcome.failed) continue;
+        const result = await executeWithFailover(batch[index], 0, [...context.messages], first);
+        if (signal.aborted) return finish(false, false, unavailable);
+        if (!result || !record(result)) unrecovered = true;
+        else scheduled.add(result.member.id);
+      }
+      if (unrecovered) return finish(false, true, unavailable);
     } else {
       for (let index = 0; index < batch.length; index++) {
         const item = batch[index];
-        const result = await execute(item, 0, [...context.messages]);
-        if (signal.aborted || !record(result)) return { limited: false };
+        const result = await executeWithFailover(item, 0, [...context.messages]);
+        if (signal.aborted) return finish(false, false, unavailable);
+        if (!result || !record(result)) return finish(false, true, unavailable);
+        scheduled.add(result.member.id);
         // A planned later member may receive a public/private handoff from an
         // earlier member. Preserve that delivery as an explicit trigger rather
         // than scheduling the recipient a second time after the sequence.
         const upcoming = new Map(batch.slice(index + 1).map((entry) => [entry.memberId, entry]));
         const completed = new Set(batch.slice(0, index + 1).map((entry) => entry.memberId));
+        completed.add(result.member.id);
         const outcome = result.outcome;
         for (const handoff of handoffsFrom(outcome.messages, outcome.privateMessages ?? [], group, completed)) {
           const planned = upcoming.get(handoff.memberId);
@@ -272,11 +336,21 @@ export async function runGroupConversation({ group, user, history = [], privateM
         }
       }
     }
-    if (truncated) return { limited: true };
+    if (truncated) return finish(true, false, unavailable);
     pending = handoffsFrom(batchMessages, batchDeliveries, group, scheduled);
+    if (!pending.length && supervised) {
+      const raw = await decide({ ...context, messages: [...context.messages],
+        privateDeliveries: [...context.privateDeliveries], completedTurns: [...context.completedTurns] });
+      if (signal.aborted) return finish(false, false, unavailable);
+      const next = validateGroupDecision(raw, group, context);
+      if (next.mode === "none") return finish(false, false, unavailable);
+      pending = next.memberIds.map((memberId) => ({ memberId, triggerMessageIds: next.triggerMessageIds }));
+      mode = next.mode;
+      continue;
+    }
     mode = pending.length > 1 ? "parallel" : "single";
   }
-  return { limited: false };
+  return finish(false, false, unavailable);
 }
 
 /** Coordination is isolated from the lead member's ordinary private/group reply sessions. */
@@ -291,19 +365,18 @@ export function groupControllerSessionId(groupId: string, topicId?: string): str
 }
 
 /** Only task-independent dispatch and message transport contracts live here. */
-export function groupDecisionPrompt(group: AgentGroup, context: GroupDecisionContext): string {
+export function groupDecisionPrompt(group: AgentGroup, context: GroupDecisionContext, coordinator = groupLeadMember(group)): string {
   const latestUser = [...context.messages].reverse().find((message) => message.role === "user");
   const messages = sharedGroupMessages(context.messages, latestUser ? [latestUser.id] : []);
-  const lead = groupLeadMember(group);
   return [
-    "You are the lead member coordinating this group. Route the message based on the request and member profiles. Choose single for one best respondent, parallel for independent responses from multiple members, sequential when later members should see earlier work, or none when no reply is appropriate. For multi-member work that needs a unified answer, normally schedule specialists first and the lead member last to consolidate their results. The human participant is identified by human.name. This is a coordination decision, not a participant reply. Use only the supplied context; do not call tools.",
+    "You are the lead member supervising this group task. Inspect the request, member profiles, shared results, and completed turns. Choose single for one best next worker, parallel for independent next steps, sequential when later members should see earlier work, or none only when the user's task is complete and the shared transcript already contains a user-facing final result (or when no reply is appropriate). Never repeat completed work. For multi-member work that needs a unified answer, schedule specialists first and the lead member last to consolidate and verify their results. The human participant is identified by human.name. This is a coordination decision, not a participant reply. Use only the supplied context; do not call tools.",
     "Return only JSON with mode (none, single, parallel, or sequential), memberIds (exact member ids, ordered for sequential), and triggerMessageIds (accessible message ids they should respond to; empty only for none). Private delivery envelopes are visible here, but their bodies are available only to their sender and recipient.",
     JSON.stringify({ task: "group_dispatch", group: { name: group.name, description: group.description ?? "" },
-      leadMember: lead ? { id: lead.id, name: lead.title, description: lead.agentDescription ?? "" } : null,
+      leadMember: coordinator ? { id: coordinator.id, name: coordinator.title, description: coordinator.agentDescription ?? "" } : null,
       members: group.members.map((member) => ({ id: member.id, name: member.title, description: member.agentDescription ?? "" })),
       human: { kind: "human", name: group.humanName?.trim() || "human", privateAddress: "human" }, messages,
       privateDeliveries: context.privateDeliveries.map(({ id, sender, recipient, createdAt }) => ({ id, sender, recipient, createdAt })),
-      completedTurns: context.completedTurns }),
+      completedTurns: context.completedTurns, unavailableMemberIds: context.unavailableMemberIds ?? [] }),
   ].join("\n");
 }
 

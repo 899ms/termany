@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { groupConversationPrompt, groupControllerSessionId, groupDecisionPrompt, groupMemberSessionId, runGroupConversation, splitGroupReply } from "../../web/src/agentGroupChat";
 import type { AgentConversation, AgentMessage } from "../../web/src/state/store";
 
-test("an isolated ACP controller selects each member and stops after their responses", { timeout: 20_000 }, async (t) => {
+test("an isolated ACP controller supervises handoffs and confirms completion", { timeout: 20_000 }, async (t) => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "termany-handoff-"));
   const home = t.mock.method(os, "homedir", () => directory);
   const db = await import("./db.js");
@@ -47,7 +47,7 @@ test("an isolated ACP controller selects each member and stops after their respo
     return replies;
   } });
   assert.equal(result.limited, false);
-  assert.equal(decisions, 1, "later turns continue through explicit Bot handoffs without rerunning the controller");
+  assert.equal(decisions, 2, "the controller routes once, then verifies the completed handoff chain");
   assert.deepEqual(history.slice(1).map((message) => message.sender?.id), ["a", "a", "b", "a"]);
   assert.equal(history[1].content, "First finding");
   assert.match(history[3].content, /Checked: @Writer Check the finding/);

@@ -110,6 +110,10 @@ export interface AgentMessage {
   botDeliveries?: AgentBotDelivery[];
   /** Consecutive bubbles produced by one model turn share this id. */
   replyGroupId?: string;
+  /** Model-generated first message for a Topic, before the human has spoken. */
+  openingGreeting?: boolean;
+  /** Stable snapshot of the message this user message answers. */
+  replyTo?: { id: string; content: string };
 }
 
 export interface AgentGroupTopic {
@@ -447,7 +451,7 @@ interface State {
   prevPane: () => void;
   renamePane: (leafId: string, title: string) => void;
   setPaneAgentSession: (leafId: string, info: { agent: string; sessionId: string }) => void;
-  setAgentMessages: (leafId: string, messages: AgentMessage[]) => void;
+  setAgentMessages: (leafId: string, messages: AgentMessage[], removedMessageIds?: readonly string[]) => void;
   setAgentModel: (leafId: string, model: string) => void;
   setAgentConfigOption: (leafId: string, agentId: string, configId: string, value: string) => void;
   setAgentRuntime: (leafId: string, runtimeId: string) => void;
@@ -2008,15 +2012,17 @@ export const useStore = create<State>((set, get) => ({
       })),
     })),
 
-  setAgentMessages: (leafId, messages) =>
+  setAgentMessages: (leafId, messages, removedMessageIds = []) =>
     set((s) => {
+      const removed = new Set(removedMessageIds);
       const nextMessages = (leaf: Pane & { kind: "leaf" }) =>
         // Keep state persistence bounded while retaining enough history for
         // the paginated chat view.
         // A group can deliver a private message while this direct reply streams.
         // Keep those independently delivered messages when saving the reply.
         [...messages, ...(leaf.agentMessages ?? []).filter((item) =>
-          (item.sourceGroup || item.sourceBot) && !messages.some((next) => next.id === item.id)
+          (item.sourceGroup || item.sourceBot) && !removed.has(item.id) &&
+          !messages.some((next) => next.id === item.id)
         )].sort((a, b) => a.createdAt - b.createdAt).slice(-MAX_PERSISTED_AGENT_MESSAGES).map((item) => ({
           ...item,
           content: item.content.slice(0, 12_000),

@@ -210,6 +210,7 @@ export default {
   "agentChat.send": "Надіслати повідомлення",
   "agentChat.stop": "Зупинити відповідь",
   "agentChat.copy": "Копіювати",
+  "agentChat.reply": "Відповісти",
   "agentChat.thinking": "Думає…",
   "agentChat.sending": "Надсилання…",
   "agentChat.preparing": "Отримано, підготовка…",

@@ -16,3 +16,12 @@ test("file paths stay out of display content but enter the runtime prompt", () =
   assert.equal(display, "Review this");
   assert.equal(prompt, "Review this\nAttached files:\n\"/tmp/notes.md\"");
 });
+
+test("a reply carries the referenced message into the runtime prompt", () => {
+  const prompt = agentMessagePromptContent({
+    content: "That is the part I meant.",
+    replyTo: { id: "earlier", content: "Which section should I change?" },
+  });
+  assert.equal(prompt,
+    "Replying to this earlier message:\n> Which section should I change?\n\nThat is the part I meant.");
+});

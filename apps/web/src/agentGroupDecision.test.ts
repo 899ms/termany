@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { requestGroupDecision } from "./agentGroupDecision";
+import { requestGroupDecision, requestGroupDecisionWithFailover } from "./agentGroupDecision";
 import { groupControllerSessionId } from "./agentGroupChat";
 import type { AgentConversation } from "./state/store";
 
@@ -84,4 +84,54 @@ test("a cancelled dispatch cannot return an actionable model decision", async ()
     abort.abort();
     return stream(events('{"memberId":"b","triggerMessageIds":["u"]}'));
   } }), { name: "AbortError" });
+});
+
+test("dispatch automatically promotes the first healthy backup coordinator", async () => {
+  const calls: string[] = [];
+  const result = await requestGroupDecisionWithFailover({ group, context, signal: new AbortController().signal,
+    candidates: group.members.map((member) => ({ member, endpoint: `/coordinator/${member.id}`,
+      target: { paneId: groupControllerSessionId("g"), model: `model-${member.id}` } })),
+    fetcher: async (url, init) => {
+      calls.push(String(url));
+      const prompt = JSON.parse(String(JSON.parse(String(init?.body)).messages[0].content).split("\n").at(-1)!);
+      assert.equal(prompt.leadMember.id, calls.length === 1 ? "a" : "b");
+      if (String(url).endsWith("/a")) return new Response("provider unavailable", { status: 503 });
+      return stream(events('{"mode":"single","memberIds":["b"],"triggerMessageIds":["u"]}'));
+    },
+  });
+  assert.deepEqual(calls, ["/coordinator/a", "/coordinator/b"]);
+  assert.equal(result.leader.id, "b");
+  assert.deepEqual(result.failedMemberIds, ["a"]);
+  assert.equal(result.decision.memberIds[0], "b");
+});
+
+test("a hung coordinator times out before the next candidate is tried", async () => {
+  const calls: string[] = [];
+  const result = await requestGroupDecisionWithFailover({ group, context, signal: new AbortController().signal,
+    candidates: group.members.map((member) => ({ member, endpoint: `/coordinator/${member.id}`,
+      target: { paneId: groupControllerSessionId("g"), model: `model-${member.id}` } })), timeoutMs: 5,
+    fetcher: async (url) => {
+      calls.push(String(url));
+      if (String(url).endsWith("/a")) return new Promise<Response>(() => {});
+      return stream(events('{"mode":"single","memberIds":["b"],"triggerMessageIds":["u"]}'));
+    },
+  });
+  assert.deepEqual(calls, ["/coordinator/a", "/coordinator/b"]);
+  assert.equal(result.leader.id, "b");
+  assert.deepEqual(result.failedMemberIds, ["a"]);
+});
+
+test("user cancellation stops coordinator failover", async () => {
+  const abort = new AbortController();
+  let calls = 0;
+  await assert.rejects(requestGroupDecisionWithFailover({ group, context, signal: abort.signal,
+    candidates: group.members.map((member) => ({ member, endpoint: `/coordinator/${member.id}`,
+      target: { paneId: groupControllerSessionId("g"), model: `model-${member.id}` } })),
+    fetcher: async () => {
+      calls++;
+      abort.abort();
+      throw new DOMException("cancelled", "AbortError");
+    },
+  }), { name: "AbortError" });
+  assert.equal(calls, 1);
 });

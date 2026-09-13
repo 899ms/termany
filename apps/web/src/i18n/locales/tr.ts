@@ -209,6 +209,7 @@ export default {
   "agentChat.send": "Mesaj gönder",
   "agentChat.stop": "Yanıtı durdur",
   "agentChat.copy": "Kopyala",
+  "agentChat.reply": "Yanıtla",
   "agentChat.thinking": "Düşünüyor…",
   "agentChat.sending": "Gönderiliyor…",
   "agentChat.preparing": "Alındı, hazırlanıyor…",
