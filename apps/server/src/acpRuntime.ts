@@ -5,10 +5,12 @@ import {
   ndJsonStream,
   type ActiveSession,
   type ClientConnection,
+  type ContentBlock,
   type PermissionOption,
   type RequestPermissionRequest,
   type RequestPermissionResponse,
   type SessionConfigOption,
+  type SessionNotification,
   type SessionUpdate,
 } from "@agentclientprotocol/sdk";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
@@ -19,11 +21,21 @@ import { findAgentConfig, type AgentConfig } from "./agentConfig.js";
 import { overriddenCredentials, subscriptionEnvironment } from "./agentCredentials.js";
 import { getMeta, setMeta } from "./db.js";
 import { resolveExecutable, spawnEnvironment } from "./shellPath.js";
+import { botAcpPrompt } from "./botIdentity.js";
+import { splitAgentRuntimeNotices } from "@termany/core";
+import { AcpConfigCompatibility } from "./acpConfigCompatibility.js";
+import { checkNativeAcpSupport } from "./nativeAcp.js";
+import { checkGeminiAuthSupport } from "./geminiAuth.js";
+import { stopAgentProcess } from "./agentProcess.js";
+import { loadAgentImages, saveAgentOutputImages, type LoadedAgentImage, type StoredAgentImage } from "./agentImages.js";
+import { FastClawRuntime } from "./fastClawRuntime.js";
 
 export type AcpRuntimeEvent =
   | { type: "delta"; text: string }
+  | { type: "replace"; text: string }
   | { type: "thought"; text: string }
-  | { type: "activity"; title: string; status?: string }
+  | ({ type: "image" } & StoredAgentImage)
+  | { type: "activity"; title: string; status?: string; phase?: "starting" | "processing" }
   | { type: "tool"; id: string; title?: string; status?: string; input?: string; output?: string }
   | { type: "permission"; requestId: string; title: string; options: PermissionOption[] }
   | { type: "done"; sessionId: string };
@@ -79,6 +91,10 @@ function textFromUpdate(update: SessionUpdate): string | undefined {
   return content.type === "text" ? content.text : undefined;
 }
 
+function replacementCount(text: string): number {
+  return text.split("\uFFFD").length - 1;
+}
+
 /** Keep tool detail blobs bounded — they persist with the conversation. */
 const TOOL_DETAIL_LIMIT = 10_000;
 
@@ -120,7 +136,9 @@ function formatToolOutput(content: unknown, rawOutput: unknown): string | undefi
 class Runtime {
   private emit: Emit | null = null;
   private prompting = false;
+  private promptSignal: AbortSignal | null = null;
   private stderr = "";
+  private replayCapture: { sessionId: string; finalText: string; lastUpdateAt: number } | null = null;
   /** Model/mode/effort selectors the agent offers for this session, with their
    *  current values. Refreshed from every reply the agent sends about them —
    *  it can change them on its own (a slash command, a fallback), and a stale
@@ -137,7 +155,10 @@ class Runtime {
     readonly cwd: string,
     private readonly child: ChildProcessWithoutNullStreams,
     private readonly connection: ClientConnection,
-    private readonly session: ActiveSession
+    private session: ActiveSession,
+    private readonly compatibility: AcpConfigCompatibility,
+    private readonly supportsImagePrompts: boolean,
+    private readonly supportsSessionLoad: boolean
   ) {
     this.configOptions = session.newSessionResponse.configOptions ?? [];
     rememberConfig(agent.id, this.configOptions);
@@ -145,10 +166,11 @@ class Runtime {
       this.stderr = (this.stderr + String(chunk)).slice(-8_000);
     });
     child.once("exit", (code, signal) => {
+      stopAgentProcess(child);
       const detail = this.stderr.trim();
       this.connection.close(new Error(`Agent runtime exited (${signal ?? code ?? "unknown"})${detail ? `: ${detail}` : ""}`));
       this.cancelPermissions();
-      runtimes.delete(paneId);
+      if (runtimes.get(paneId) === this) runtimes.delete(paneId);
     });
   }
 
@@ -167,6 +189,8 @@ class Runtime {
     // login PATH rather than the bundle's launchd-inherited one — but not the
     // API keys a shell profile may also export. See agentCredentials.ts.
     const env = subscriptionEnvironment(await spawnEnvironment(), agent);
+    await checkGeminiAuthSupport(agent, env);
+    await checkNativeAcpSupport(agent, command, env);
     const dropped = overriddenCredentials(agent).filter((name) => name in process.env);
     if (dropped.length) {
       console.log(`[termany] ${agent.name}: using its own login, ignoring ${dropped.join(", ")}`);
@@ -175,55 +199,118 @@ class Runtime {
       cwd,
       env,
       stdio: ["pipe", "pipe", "pipe"],
+      detached: process.platform !== "win32",
     });
 
-    let runtime!: Runtime;
+    let runtime: Runtime | undefined;
+    let stderr = "";
+    // Capture failures from startup too (bad interpreter, unsupported ACP, etc.).
+    child.stderr.on("data", (chunk) => { stderr = (stderr + String(chunk)).slice(-8_000); });
     const app = client({ name: "Termany" }).onRequest(
       methods.client.session.requestPermission,
-      ({ params }) => runtime.requestPermission(params)
-    );
+      ({ params }) => runtime?.requestPermission(params) ?? { outcome: { outcome: "cancelled" as const } }
+    ).onNotification(methods.client.session.update, ({ params }) => runtime?.captureReplayUpdate(params));
     const stream = ndJsonStream(
       Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
       Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>
     );
-    const connection = app.connect(stream);
+    const compatibility = new AcpConfigCompatibility();
+    const connection = app.connect({
+      writable: stream.writable,
+      readable: stream.readable.pipeThrough(new TransformStream({
+        transform(message, controller) { controller.enqueue(compatibility.normalize(message)); },
+      })),
+    });
+    child.once("error", (error) => connection.close(error));
+    child.once("exit", (code, signal) => {
+      if (!runtime) connection.close(new Error(`Agent runtime exited (${signal ?? code ?? "unknown"})`));
+    });
+    const startupTimeout = setTimeout(() => connection.close(new Error(
+      `${agent.name} did not start ACP within 60 seconds. Check its CLI version and login.`
+    )), 60_000);
     try {
-      await connection.agent.request(methods.agent.initialize, {
+      const initialization = await connection.agent.request(methods.agent.initialize, {
         protocolVersion: PROTOCOL_VERSION,
         clientCapabilities: {},
         clientInfo: { name: "Termany", version: "0.1.21" },
       });
       const session = await connection.agent.buildSession(cwd).start();
-      runtime = new Runtime(paneId, agent, cwd, child, connection, session);
+      runtime = new Runtime(paneId, agent, cwd, child, connection, session, compatibility,
+        initialization.agentCapabilities?.promptCapabilities?.image === true,
+        initialization.agentCapabilities?.loadSession === true);
       return runtime;
     } catch (error) {
       connection.close(error);
-      child.kill();
-      const detail = runtime?.stderr?.trim();
+      stopAgentProcess(child);
+      const detail = stderr.trim();
       throw new Error(`${error instanceof Error ? error.message : String(error)}${detail ? `: ${detail}` : ""}`);
+    } finally {
+      clearTimeout(startupTimeout);
     }
   }
 
-  async prompt(text: string, emit: Emit, signal: AbortSignal): Promise<void> {
+  async prompt(text: string, emit: Emit, signal: AbortSignal, botIdentity?: unknown,
+    images: LoadedAgentImage[] = []): Promise<void> {
+    signal.throwIfAborted();
     if (this.prompting) throw new Error("This agent is already responding");
     this.prompting = true;
+    this.promptSignal = signal;
     this.emit = emit;
-    const cancel = () => void this.connection.agent.notify(methods.agent.session.cancel, { sessionId: this.session.sessionId });
+    const cancel = () => {
+      this.cancelPermissions();
+      void this.connection.agent.notify(methods.agent.session.cancel, { sessionId: this.session.sessionId }).catch(() => undefined);
+    };
     signal.addEventListener("abort", cancel, { once: true });
     try {
-      void this.session.prompt(text).catch(() => undefined);
+      const base = botAcpPrompt(text, botIdentity);
+      let prompt: string | ContentBlock[] = base;
+      if (images.length) {
+        const blocks: ContentBlock[] = typeof base === "string" ? [{ type: "text", text: base }] : base;
+        prompt = this.supportsImagePrompts
+          ? [...blocks, ...images.map((image): ContentBlock => ({
+              type: "image", data: image.data, mimeType: image.mimeType,
+            }))]
+          : [...blocks, { type: "text", text: `Attached local image files:\n${images.map((image) => image.path).join("\n")}` }];
+      }
+      void this.session.prompt(prompt).catch(() => undefined);
+      const emittedImageIds = new Set<string>();
+      const unfinishedToolIds = new Set<string>();
+      let streamedText = "";
+      let sawTool = false;
+      const emitImages = async (content: unknown) => {
+        for (const image of await saveAgentOutputImages(content)) {
+          if (emittedImageIds.has(image.id)) continue;
+          emittedImageIds.add(image.id);
+          emit({ type: "image", ...image });
+        }
+      };
       while (true) {
         const message = await this.session.nextUpdate();
         if (message.kind === "stop") break;
         const update = message.update;
         const textChunk = textFromUpdate(update);
         if (textChunk) {
-          emit({ type: update.sessionUpdate === "agent_thought_chunk" ? "thought" : "delta", text: textChunk });
+          if (update.sessionUpdate === "agent_thought_chunk") {
+            emit({ type: "thought", text: textChunk });
+          } else {
+            const { content, notices } = splitAgentRuntimeNotices(textChunk);
+            for (const notice of notices) console.warn(`[termany] ${this.agent.name}: ${notice}`);
+            if (content) {
+              streamedText += content;
+              emit({ type: "delta", text: content });
+            }
+          }
         } else if (update.sessionUpdate === "config_option_update") {
           this.configOptions = update.configOptions;
           rememberConfig(this.agent.id, this.configOptions);
         } else if (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") {
+          sawTool = true;
           // tool_call_update carries only changed fields; the client merges by id.
+          if (update.status === "pending" || update.status === "in_progress") {
+            unfinishedToolIds.add(update.toolCallId);
+          } else if (update.status) {
+            unfinishedToolIds.delete(update.toolCallId);
+          }
           emit({
             type: "tool",
             id: update.toolCallId,
@@ -232,14 +319,76 @@ class Runtime {
             input: formatToolInput(update.rawInput),
             output: formatToolOutput(update.content, update.rawOutput),
           });
+          await emitImages(update.content);
+        } else if (update.sessionUpdate === "agent_message_chunk") {
+          await emitImages(update.content);
         }
       }
+      if (!sawTool && streamedText.includes("\uFFFD")) {
+        const recovered = await this.recoverFinalText();
+        if (recovered && replacementCount(recovered) < replacementCount(streamedText)) {
+          emit({ type: "replace", text: recovered });
+        }
+      }
+      // Some ACP adapters finish the turn without sending a terminal update
+      // for their final tool call. The turn's stop event is authoritative: at
+      // this point the tool is no longer running, so clear any stale spinner
+      // before telling the web client that the reply is done.
+      for (const id of unfinishedToolIds) emit({ type: "tool", id, status: "completed" });
       emit({ type: "done", sessionId: this.session.sessionId });
     } finally {
       signal.removeEventListener("abort", cancel);
       this.emit = null;
+      this.promptSignal = null;
       this.prompting = false;
       if (signal.aborted) this.cancelPermissions();
+    }
+  }
+
+  private captureReplayUpdate(notification: SessionNotification): void {
+    const capture = this.replayCapture;
+    if (!capture || notification.sessionId !== capture.sessionId) return;
+    const update = notification.update;
+    capture.lastUpdateAt = Date.now();
+    if (update.sessionUpdate === "user_message_chunk") {
+      capture.finalText = "";
+      return;
+    }
+    if (update.sessionUpdate === "agent_message_chunk" && update.content.type === "text") {
+      capture.finalText += update.content.text;
+    }
+  }
+
+  /** ACP streams are best-effort UI output. If one contained invalid UTF-8 replacement
+   * characters, replay the agent's persisted transcript and use its authoritative final
+   * assistant message. This is intentionally lazy so ordinary turns pay no extra request. */
+  private async recoverFinalText(): Promise<string | undefined> {
+    if (!this.supportsSessionLoad) return;
+    const response = this.session.newSessionResponse;
+    const capture = { sessionId: this.session.sessionId, finalText: "", lastUpdateAt: 0 };
+    this.session.dispose();
+    this.replayCapture = capture;
+    try {
+      await this.connection.agent.request(methods.agent.session.load, {
+        sessionId: capture.sessionId, cwd: this.cwd, mcpServers: [],
+      });
+      // Incoming responses can resolve just before queued notification handlers finish.
+      // Wait for a short quiet period, bounded so a broken agent cannot stall the reply.
+      const deadline = Date.now() + 1_000;
+      while (Date.now() < deadline) {
+        const lastUpdateAt = capture.lastUpdateAt;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        if (lastUpdateAt > 0 && capture.lastUpdateAt === lastUpdateAt) break;
+      }
+      return capture.finalText || undefined;
+    } catch (error) {
+      console.warn(`[termany] ${this.agent.name}: could not recover corrupted ACP text: ${
+        error instanceof Error ? error.message : String(error)
+      }`);
+      return undefined;
+    } finally {
+      this.replayCapture = null;
+      this.session = this.connection.agent.attachSession(response);
     }
   }
 
@@ -251,12 +400,27 @@ class Runtime {
   async setConfigOption(configId: string, value: string): Promise<SessionConfigOption[]> {
     const option = this.configOptions.find((entry) => entry.id === configId);
     if (!option) throw new Error(`${this.agent.name} has no "${configId}" option in this session`);
+    if (option.type === "select" && !selectValues(option).includes(value)) {
+      throw new Error(`Invalid value for ${this.agent.name}'s ${configId} option`);
+    }
+    const legacy = this.compatibility.legacyKind(configId);
+    if (legacy) {
+      await this.connection.agent.request(
+        legacy === "model" ? "session/set_model" : methods.agent.session.setMode,
+        { sessionId: this.session.sessionId, ...(legacy === "model" ? { modelId: value } : { modeId: value }) }
+      );
+      this.compatibility.setCurrent(legacy, value);
+      this.configOptions = this.compatibility.options;
+      rememberConfig(this.agent.id, this.configOptions);
+      return this.configOptions;
+    }
     const response = await this.connection.agent.request(methods.agent.session.setConfigOption, {
       sessionId: this.session.sessionId,
       configId,
       ...(option.type === "boolean" ? { type: "boolean" as const, value: value === "true" } : { value }),
     });
-    this.configOptions = response.configOptions;
+    this.compatibility.replaceOptions(response.configOptions);
+    this.configOptions = this.compatibility.options;
     rememberConfig(this.agent.id, this.configOptions);
     return this.configOptions;
   }
@@ -298,20 +462,20 @@ class Runtime {
     this.cancelPermissions();
     this.session.dispose();
     this.connection.close();
-    this.child.kill();
+    stopAgentProcess(this.child);
   }
 
   private requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
-    if (!this.emit) return Promise.resolve({ outcome: { outcome: "cancelled" } });
+    if (!this.emit || this.promptSignal?.aborted) return Promise.resolve({ outcome: { outcome: "cancelled" } });
     const requestId = randomUUID();
-    this.emit({
-      type: "permission",
-      requestId,
-      title: params.toolCall.title || "Allow this action?",
-      options: params.options,
-    });
     return new Promise((resolve) => {
       this.pendingPermissions.set(requestId, { resolve, options: params.options });
+      this.emit?.({
+        type: "permission",
+        requestId,
+        title: params.toolCall.title || "Allow this action?",
+        options: params.options,
+      });
     });
   }
 
@@ -323,7 +487,9 @@ class Runtime {
   }
 }
 
-const runtimes = new Map<string, Runtime>();
+type RuntimeHandle = Runtime | FastClawRuntime;
+
+const runtimes = new Map<string, RuntimeHandle>();
 
 /**
  * Last selector list each agent reported, kept in SQLite so it also survives a
@@ -377,17 +543,20 @@ export interface AcpRuntimeTarget {
  * in one of them and the menu would configure a session the next prompt then
  * throws away.
  */
-async function acquire(input: AcpRuntimeTarget): Promise<Runtime> {
+async function acquire(input: AcpRuntimeTarget): Promise<RuntimeHandle> {
+  const agent = findAgentConfig(input.agentId);
+  if (!agent || !agent.enabled) throw new Error("Agent runtime is missing or disabled");
   let runtime = runtimes.get(input.paneId);
-  if (runtime && (runtime.agent.id !== input.agentId || (input.cwdExplicit && runtime.cwd !== input.cwd))) {
+  const configChanged = runtime && JSON.stringify(runtime.agent.runtime) !== JSON.stringify(agent.runtime);
+  if (runtime && (runtime.agent.id !== input.agentId || configChanged || (input.cwdExplicit && runtime.cwd !== input.cwd))) {
     runtime.close();
     runtimes.delete(input.paneId);
     runtime = undefined;
   }
   if (runtime) return runtime;
-  const agent = findAgentConfig(input.agentId);
-  if (!agent || !agent.enabled) throw new Error("Agent runtime is missing or disabled");
-  runtime = await Runtime.create(input.paneId, agent, input.cwd || os.homedir());
+  runtime = agent.runtime?.protocol === "acp-http"
+    ? await FastClawRuntime.create(input.paneId, agent, input.cwd || os.homedir())
+    : await Runtime.create(input.paneId, agent, input.cwd || os.homedir());
   runtimes.set(input.paneId, runtime);
   if (input.config) await runtime.applyConfig(input.config);
   return runtime;
@@ -408,6 +577,7 @@ async function acquire(input: AcpRuntimeTarget): Promise<Runtime> {
 export function acpRuntimeConfig(input: AcpRuntimeTarget): SessionConfigOption[] | null {
   const live = runtimes.get(input.paneId);
   if (live && live.agent.id === input.agentId) return live.config;
+  if (findAgentConfig(input.agentId)?.runtime?.protocol === "acp-http") return null;
   const cached = cachedConfig(input.agentId);
   return cached && withPicks(cached, input.config ?? {});
 }
@@ -430,6 +600,9 @@ export async function setAcpConfigOption(
 ): Promise<SessionConfigOption[]> {
   const live = runtimes.get(input.paneId);
   if (live && live.agent.id === input.agentId) return live.setConfigOption(input.configId, input.value);
+  if (findAgentConfig(input.agentId)?.runtime?.protocol === "acp-http") {
+    return (await acquire(input)).setConfigOption(input.configId, input.value);
+  }
   const cached = cachedConfig(input.agentId);
   if (!cached) return (await acquire(input)).setConfigOption(input.configId, input.value);
   return withPicks(cached, { ...input.config, [input.configId]: input.value });
@@ -445,12 +618,19 @@ function withPicks(options: SessionConfigOption[], picks: Record<string, string>
 }
 
 export async function promptAcpRuntime(
-  input: AcpRuntimeTarget & { prompt: string; signal: AbortSignal; emit: Emit }
+  input: AcpRuntimeTarget & { prompt: string; images?: unknown; botIdentity?: unknown; applySavedConfig?: boolean; signal: AbortSignal; emit: Emit }
 ): Promise<void> {
-  input.emit({ type: "activity", title: "Starting agent", status: input.agentId });
+  input.signal.throwIfAborted();
+  input.emit({ type: "activity", title: "Starting agent", status: input.agentId, phase: "starting" });
   const runtime = await acquire(input);
-  input.emit({ type: "activity", title: runtime.agent.name, status: "Thinking" });
-  await runtime.prompt(input.prompt, input.emit, input.signal);
+  // Stopping during a cold start must not begin a model request afterwards.
+  input.signal.throwIfAborted();
+  // A group has its own session for each Bot. Reconcile the Bot's saved model
+  // on later turns too, since it may have changed through its private settings.
+  if (input.applySavedConfig && input.config) await runtime.applyConfig(input.config);
+  input.signal.throwIfAborted();
+  input.emit({ type: "activity", title: runtime.agent.name, status: "Thinking", phase: "processing" });
+  await runtime.prompt(input.prompt, input.emit, input.signal, input.botIdentity, await loadAgentImages(input.images));
 }
 
 /** The folder a pane's live ACP session is actually bound to, if one exists. */

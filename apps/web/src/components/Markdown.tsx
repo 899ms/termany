@@ -41,10 +41,23 @@ DOMPurify.addHook("afterSanitizeAttributes", (node) => {
   }
 });
 
-export function Markdown({ text, onRun }: { text: string; onRun?: (code: string) => void }) {
+export function Markdown({
+  text,
+  onRun,
+  inline = false,
+}: {
+  text: string;
+  onRun?: (code: string) => void;
+  inline?: boolean;
+}) {
   const { t } = useI18n();
   const ref = useRef<HTMLDivElement>(null);
-  const html = useMemo(() => DOMPurify.sanitize(marked.parse(text, { async: false })), [text]);
+  const html = useMemo(
+    () => DOMPurify.sanitize(inline
+      ? marked.parseInline(text, { async: false })
+      : marked.parse(text, { async: false })),
+    [inline, text]
+  );
 
   // Button titles are stamped after render — keeps the translatable strings
   // out of the sanitized HTML, which is memoized on `text` alone.
@@ -80,7 +93,7 @@ export function Markdown({ text, onRun }: { text: string; onRun?: (code: string)
 
   return (
     <div
-      className={`markdown-body ${onRun ? "" : "md-no-run"}`}
+      className={`markdown-body${inline ? " markdown-inline" : ""}${onRun ? "" : " md-no-run"}`}
       ref={ref}
       onClick={onClick}
       dangerouslySetInnerHTML={{ __html: html }}

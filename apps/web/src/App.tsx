@@ -2,14 +2,18 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FindBar } from "./components/FindBar";
 import { GitDiff } from "./components/GitDiff";
 import { HTabBar } from "./components/HTabBar";
+import { AgentWorkspace } from "./components/AgentWorkspace";
+import { AppTabRail, type AppTab } from "./components/AppTabRail";
 import { QuitConfirm } from "./components/QuitConfirm";
 import { ResizeHandles } from "./components/ResizeHandles";
 import { SearchPalette } from "./components/SearchPalette";
 import { Settings, type SettingsSection } from "./components/Settings";
+import { fetchSystemUsername } from "./userProfile";
 import { SideRail } from "./components/SideRail";
 import { SplitView } from "./components/SplitView";
 import { TreeSidebar } from "./components/TreeSidebar";
 import { WindowControls } from "./components/WindowControls";
+import { WorkspaceSwitcher } from "./components/WorkspaceSwitcher";
 import { isTauri } from "./env";
 import { ACTIONS, matchChord } from "./keybindings";
 import { activeHtab, activeNode, focusedCwdSession, leafIds, useStore } from "./state/store";
@@ -74,6 +78,16 @@ const TREE_NAVIGATION_ACTION_IDS = new Set([
   "exitPage",
 ]);
 
+const APP_TAB_STORAGE_KEY = "termany.app-tab";
+
+function loadAppTab(): AppTab {
+  try {
+    return localStorage.getItem(APP_TAB_STORAGE_KEY) === "agents" ? "agents" : "pages";
+  } catch {
+    return "pages";
+  }
+}
+
 /** Preserve native macOS cursor movement everywhere except xterm's hidden input. */
 function isTextEditingTarget(target: EventTarget | null): boolean {
   const element = target instanceof Element ? target : document.activeElement;
@@ -84,14 +98,20 @@ function isTextEditingTarget(target: EventTarget | null): boolean {
 
 export function App() {
   const htab = useStore(activeHtab);
+  const activeWorkspaceId = useStore((state) => state.activeWorkspace);
+  const [appTab, setAppTab] = useState<AppTab>(loadAppTab);
   const collapsed = useStore((s) => s.sidebarCollapsed);
   const railCollapsed = useStore((s) => s.railCollapsed);
   const [settingsSection, setSettingsSection] = useState<SettingsSection | null>(null);
+  const [settingsAgentId, setSettingsAgentId] = useState<string | null>(null);
   // Where Settings was left when it closed, so the next plain "open settings"
   // lands there instead of snapping back to General. Entry points that target a
   // specific pane (the agents menu) still win, and update this in turn.
   const lastSettingsSection = useRef<SettingsSection>("general");
-  const openSettings = useCallback(() => setSettingsSection(lastSettingsSection.current), []);
+  const openSettings = useCallback(() => {
+    setSettingsAgentId(null);
+    setSettingsSection(lastSettingsSection.current);
+  }, []);
   const [searchOpen, setSearchOpen] = useState(false);
   const [agentsOpen, setAgentsOpen] = useState(false);
   const [gitDiffOpen, setGitDiffOpen] = useState(false);
@@ -99,6 +119,27 @@ export function App() {
   const settingsOpen = settingsSection !== null;
   const focusedPane = htab?.focused;
   const gitSession = useStore(focusedCwdSession);
+  const userNickname = useStore((state) => state.userProfile.nickname);
+  const setUserProfile = useStore((state) => state.setUserProfile);
+
+  useEffect(() => {
+    if (userNickname.trim()) return;
+    let active = true;
+    void fetchSystemUsername().then((nickname) => {
+      if (active && nickname && !useStore.getState().userProfile.nickname.trim()) {
+        setUserProfile({ nickname });
+      }
+    });
+    return () => { active = false; };
+  }, [setUserProfile, userNickname]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(APP_TAB_STORAGE_KEY, appTab);
+    } catch {
+      // A locked-down browser can deny storage; the current window still works.
+    }
+  }, [appTab]);
 
   // The find bar targets one pane; if focus moves elsewhere, it would be
   // searching a terminal the user is no longer looking at — close it instead.
@@ -108,7 +149,9 @@ export function App() {
   // footers ask for a section over an event rather than a threaded-down prop.
   useEffect(() => {
     const onOpen = (event: Event) => {
-      const section = (event as CustomEvent<SettingsSection>).detail;
+      const detail = (event as CustomEvent<SettingsSection | { section: SettingsSection; agentId?: string }>).detail;
+      const section = typeof detail === "string" ? detail : detail.section;
+      setSettingsAgentId(typeof detail === "string" ? null : detail.agentId ?? null);
       lastSettingsSection.current = section;
       setSettingsSection(section);
     };
@@ -122,7 +165,7 @@ export function App() {
   // registers its own rect via nativeViewOcclusion instead, so it only
   // blanks the pane(s) it actually overlaps (see SideRail.tsx).
   useEffect(() => {
-    const suppressed = settingsOpen || searchOpen || gitDiffOpen;
+    const suppressed = appTab !== "pages" || settingsOpen || searchOpen || gitDiffOpen;
     document.body.classList.toggle("native-webviews-suppressed", suppressed);
     window.dispatchEvent(
       new CustomEvent("termany:native-webviews-suppressed", { detail: suppressed }),
@@ -133,7 +176,7 @@ export function App() {
         new CustomEvent("termany:native-webviews-suppressed", { detail: false }),
       );
     };
-  }, [settingsOpen, searchOpen, gitDiffOpen]);
+  }, [appTab, settingsOpen, searchOpen, gitDiffOpen]);
 
   // What every bindable action DOES. The catalog itself (ids, labels, default
   // chords) lives in keybindings.ts; this is the other half. Two things drive
@@ -353,37 +396,51 @@ export function App() {
     <div className={`app${isTauri ? " tauri" : ""}`}>
       {isTauri && <WindowControls />}
       {isTauri && <ResizeHandles />}
-      {!collapsed && <TreeSidebar onOpenSettings={openSettings} />}
-      <div className="main">
-        <HTabBar />
-        <div className="pane-area">
-          <div className="pane-card">
-            {htab && <SplitView key={htab.id} htab={htab} />}
-            {findOpen && focusedPane && (
-              <FindBar
-                key={focusedPane}
-                sessionId={focusedPane}
-                onClose={() => setFindOpen(false)}
-              />
-            )}
+      <AppTabRail active={appTab} workspaceId={activeWorkspaceId} onChange={setAppTab} />
+      <WorkspaceSwitcher onOpenSettings={openSettings} />
+      {appTab === "pages" && (
+        <>
+          {!collapsed && <TreeSidebar />}
+          <div className="main">
+            <HTabBar />
+            <div className="pane-area">
+              <div className="pane-card">
+                {htab && <SplitView key={htab.id} htab={htab} />}
+                {findOpen && focusedPane && (
+                  <FindBar
+                    key={focusedPane}
+                    sessionId={focusedPane}
+                    onClose={() => setFindOpen(false)}
+                  />
+                )}
+              </div>
+            </div>
           </div>
-        </div>
-      </div>
-      {!railCollapsed && (
-        <SideRail
-          agentsOpen={agentsOpen}
-          onAgentsOpenChange={setAgentsOpen}
-          onOpenSettings={openSettings}
-          onOpenAgentsSettings={() => {
-            lastSettingsSection.current = "agents";
-            setSettingsSection("agents");
-          }}
-        />
+          {!railCollapsed && (
+            <SideRail
+              agentsOpen={agentsOpen}
+              onAgentsOpenChange={setAgentsOpen}
+              onOpenSettings={openSettings}
+              onOpenAgentsSettings={() => {
+                lastSettingsSection.current = "agents";
+                setSettingsAgentId(null);
+                setSettingsSection("agents");
+              }}
+            />
+          )}
+        </>
       )}
+      <div className="agent-workspace-host" hidden={appTab !== "agents"}>
+        <AgentWorkspace key={activeWorkspaceId} workspaceId={activeWorkspaceId} visible={appTab === "agents"} />
+      </div>
       {settingsOpen && (
         <Settings
           initialSection={settingsSection ?? "appearance"}
-          onClose={() => setSettingsSection(null)}
+          initialAgentId={settingsAgentId ?? undefined}
+          onClose={() => {
+            setSettingsSection(null);
+            setSettingsAgentId(null);
+          }}
           onSectionChange={(next) => {
             lastSettingsSection.current = next;
           }}

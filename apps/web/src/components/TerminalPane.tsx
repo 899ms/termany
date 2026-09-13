@@ -13,47 +13,11 @@ import {
   uploadFilesToSession,
   type TerminalScrollState,
 } from "../terminal/manager";
-import { subscribeDesktopFileDrops } from "../terminal/desktopFileDrop";
+import { extractDroppedPaths, subscribeDesktopFileDrops } from "../terminal/desktopFileDrop";
 import { reconcileAttachedTerminalFocus } from "../terminal/focusHandoff";
 import { activeHtab, cwdCandidates, useStore } from "../state/store";
 import { openLocalPathsInSession } from "../terminal/openLocalPath";
 import { ChevronIcon } from "./icons";
-
-function fileUrlToPath(url: string): string | null {
-  if (!url.startsWith("file://")) return null;
-  try {
-    let p = decodeURIComponent(new URL(url).pathname);
-    if (/^\/[A-Za-z]:\//.test(p)) p = p.slice(1); // file:///C:/... on Windows
-    return p;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Extract absolute local paths from a native OS file drop (Finder → this
- * pane). What's actually available depends on the webview: `text/uri-list`
- * `file://` entries (some WebKit versions populate this for local-file
- * drags) or a `File.path` (an Electron-only extension a Tauri build may or
- * may not shim) — neither is guaranteed with this app's `dragDropEnabled:
- * false` (see pasteIntoSession's doc comment in manager.ts for why that's
- * set). If nothing yields a real path, returns empty so the caller no-ops
- * instead of pasting garbage.
- */
-function extractDroppedPaths(dt: DataTransfer): string[] {
-  const uriList = dt.getData("text/uri-list");
-  if (uriList) {
-    const paths = uriList
-      .split(/\r?\n/)
-      .filter((line) => line && !line.startsWith("#"))
-      .map(fileUrlToPath)
-      .filter((p): p is string => !!p);
-    if (paths.length) return paths;
-  }
-  return Array.from(dt.files)
-    .map((f) => (f as File & { path?: string }).path)
-    .filter((p): p is string => !!p);
-}
 
 /**
  * Mounts the persistent session DOM node for `id` into this slot. On unmount we

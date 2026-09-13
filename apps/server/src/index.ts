@@ -12,6 +12,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { AgentActivityTracker } from "./agentActivity.js";
+import { detectAgentExecutable, detectCommandExecutable, parseAgentDetectionInput } from "./agentDetection.js";
 import { sampleOnceOutputSettles } from "./foregroundJob.js";
 import { DEFAULT_SESSION_PAGE_SIZE, listAgentSessions, listAgentUsage } from "./agentSessions.js";
 import { streamAgentChat } from "./agentChat.js";
@@ -47,9 +48,9 @@ import {
 } from "./db.js";
 import { gitDiffs, gitOverview, worktreeOverview } from "./git.js";
 import { pickFolder } from "./folderPicker.js";
+import { pickFiles } from "./filePicker.js";
 import { testProvider } from "./providerTest.js";
 import { ptyEnvironment } from "./ptyEnvironment.js";
-import { resolveExecutable } from "./shellPath.js";
 import { generateTheme } from "./theme.js";
 import {
   createTransferPipeline,
@@ -163,19 +164,6 @@ const SERVER_VERSION = typeof __TERMANY_VERSION__ === "string" ? __TERMANY_VERSI
 const IS_WIN = os.platform() === "win32";
 const PASTE_DIR = process.env.TERMANY_PASTE_DIR ?? `${os.tmpdir()}/termany-pastes`;
 const execFileAsync = promisify(execFile);
-
-function firstShellToken(input: string): string {
-  const trimmed = input.trim();
-  const match = /^"([^"]+)"|^'([^']+)'|^(\S+)/.exec(trimmed);
-  return match?.[1] ?? match?.[2] ?? match?.[3] ?? "";
-}
-
-async function detectExecutable(command: string): Promise<{ command: string; installed: boolean; path?: string }> {
-  const executable = firstShellToken(command);
-  if (!executable) return { command, installed: false };
-  const found = await resolveExecutable(executable);
-  return found ? { command, installed: true, path: found } : { command, installed: false };
-}
 
 function windowsPowerShellPath(): string {
   const root = process.env.SystemRoot || "C:\\Windows";
@@ -854,10 +842,8 @@ const http = createServer((req, res) => {
   if (req.method === "POST" && req.url === "/api/agent/acp/chat") {
     readJson(req)
       .then(async (body) => {
-        const target = await acpTarget(body);
         const prompt = String(body?.prompt ?? "").trim();
         if (!prompt) throw new Error("prompt is required");
-        const { paneId } = target;
         res.writeHead(200, {
           "Content-Type": "application/x-ndjson; charset=utf-8",
           "Cache-Control": "no-cache, no-transform",
@@ -873,9 +859,13 @@ const http = createServer((req, res) => {
           if (!res.writableEnded) res.write(`${JSON.stringify({ type: "heartbeat" })}\n`);
         }, 10_000);
         try {
+          const target = await acpTarget(body);
           await promptAcpRuntime({
             ...target,
             prompt,
+            images: body?.images,
+            botIdentity: body?.botIdentity,
+            applySavedConfig: body?.applySavedConfig === true,
             signal: abort.signal,
             emit: (event) => {
               if (!res.writableEnded) res.write(`${JSON.stringify(event)}\n`);
@@ -908,6 +898,17 @@ const http = createServer((req, res) => {
         (await resolveSpawnCwd(reqUrl.searchParams.get("cwdFrom"), reqUrl.searchParams.get("paneId")));
       json(200, { cwd, home: os.homedir(), explicit: Boolean(explicitCwd) });
     })().catch(fail);
+    return;
+  }
+
+  // Attach local files by their paths, using the same native picker as terminals.
+  if (req.method === "POST" && req.url === "/api/agent/pick-files") {
+    readJson(req)
+      .then(async (body) => {
+        const paths = await pickFiles(String(body?.prompt ?? "") || "Add attachment");
+        json(200, paths ? { paths } : { cancelled: true });
+      })
+      .catch(fail);
     return;
   }
 
@@ -951,6 +952,8 @@ const http = createServer((req, res) => {
           "Cache-Control": "no-cache, no-transform",
           Connection: "keep-alive",
         });
+        // Acknowledge delivery before waiting for the provider's first token.
+        res.flushHeaders();
         const abort = new AbortController();
         req.on("aborted", () => abort.abort());
         res.on("close", () => {
@@ -959,7 +962,7 @@ const http = createServer((req, res) => {
         try {
           const result = await streamAgentChat(body?.model, body?.messages, abort.signal, (text) => {
             if (!res.writableEnded && text) res.write(`${JSON.stringify({ type: "delta", text })}\n`);
-          });
+          }, body?.botIdentity);
           if (!res.writableEnded) res.end(`${JSON.stringify({ type: "done", model: result.model })}\n`);
         } catch (err) {
           if (abort.signal.aborted || res.writableEnded) return;
@@ -975,9 +978,16 @@ const http = createServer((req, res) => {
   if (req.method === "POST" && req.url === "/api/agents/detect") {
     readJson(req)
       .then(async (body) => {
+        if (Array.isArray(body?.agents)) {
+          const agents = body.agents.slice(0, 64)
+            .map(parseAgentDetectionInput)
+            .filter((agent): agent is NonNullable<typeof agent> => Boolean(agent));
+          json(200, { results: await Promise.all(agents.map((agent) => detectAgentExecutable(agent))) });
+          return;
+        }
         const commands = Array.isArray(body?.commands) ? body.commands.slice(0, 64).map(String) : [];
         const unique = [...new Set(commands.map((command) => command.trim()).filter(Boolean))];
-        json(200, { results: await Promise.all(unique.map(detectExecutable)) });
+        json(200, { results: await Promise.all(unique.map(detectCommandExecutable)) });
       })
       .catch(fail);
     return;
@@ -1005,7 +1015,10 @@ const http = createServer((req, res) => {
     return;
   }
   if (req.method === "PUT" && req.url === "/api/state") {
-    readJson(req)
+    // First-class Agent conversations live beside the workspace layout and can
+    // legitimately carry several bounded transcripts. This remains local-only
+    // and still capped, but needs more room than small settings requests.
+    readJson(req, 8_000_000)
       .then((body) => {
         saveState(body);
         // `clientId` is the writer's own tag, not part of the layout — it comes
@@ -1326,6 +1339,23 @@ const http = createServer((req, res) => {
       const limit = Number(reqUrl.searchParams.get("limit") ?? DEFAULT_SESSION_PAGE_SIZE);
       json(200, await listAgentSessions(agent, roots, cursor, limit));
     })().catch(fail);
+    return;
+  }
+
+  // Local identity used as the default display name for the human participant
+  // in group conversations. userInfo is authoritative, while the home folder
+  // fallback keeps the endpoint useful in constrained launch environments.
+  if (req.method === "GET" && reqUrl.pathname === "/api/system-profile") {
+    let username = "";
+    try {
+      username = os.userInfo().username.trim();
+    } catch {
+      // Fall through to the home-directory name below.
+    }
+    if (!username) {
+      username = path.basename(os.homedir()).trim();
+    }
+    json(200, { username: username || "user" });
     return;
   }
 

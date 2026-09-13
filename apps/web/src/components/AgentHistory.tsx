@@ -1,3 +1,4 @@
+import { textInputProps } from "../textInputProps";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAgentConfigs } from "../agents";
 import { apiPath } from "../api";
@@ -409,13 +410,10 @@ export function AgentHistory({ autoFocus = false }: { autoFocus?: boolean }) {
             <HistoryIcon />
           </span>
           <input
+            {...textInputProps}
             ref={inputRef}
             className="search-input"
             autoFocus={autoFocus}
-            autoCorrect="off"
-            autoComplete="off"
-            autoCapitalize="off"
-            spellCheck={false}
             {...ime.props}
             value={query}
             placeholder={t("history.placeholder", { agent: agentName })}

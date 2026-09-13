@@ -1,4 +1,6 @@
-import { useEffect, useState } from "react";
+import { textInputProps } from "../textInputProps";
+import { defaultAgentRuntime } from "@termany/core";
+import { useEffect, useRef, useState } from "react";
 import {
   agentCommand,
   createCustomAgent,
@@ -22,10 +24,11 @@ function AgentAvatar({ agent }: { agent: AgentConfig }) {
   );
 }
 
-export function AgentSettings() {
+export function AgentSettings({ initialAgentId }: { initialAgentId?: string }) {
   const { t } = useI18n();
   const [agents, setAgents] = useState(loadAgentConfigs);
-  const [expanded, setExpanded] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<string | null>(initialAgentId ?? null);
+  const initialAgentRef = useRef<HTMLDivElement>(null);
   const [detecting, setDetecting] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
 
@@ -38,15 +41,15 @@ export function AgentSettings() {
     commit(agents.map((agent) => (agent.id === id ? { ...agent, ...patch } : agent)));
   };
 
-  const updateRuntime = (agent: AgentConfig, patch: Partial<AgentRuntimeConfig>) => {
+  const updateRuntime = (agent: AgentConfig, patch: Record<string, unknown>) => {
     if (!agent.runtime) return;
-    updateAgent(agent.id, { runtime: { ...agent.runtime, ...patch } });
+    updateAgent(agent.id, { runtime: { ...agent.runtime, ...patch } as AgentRuntimeConfig });
   };
 
   const toggleRuntime = (agent: AgentConfig, enabled: boolean) => {
     updateAgent(agent.id, {
       runtime: enabled
-        ? agent.runtime ?? {
+        ? agent.runtime ?? (agent.builtIn ? defaultAgentRuntime(agent.id) : undefined) ?? {
             protocol: "acp",
             command: agent.command,
             args: "acp",
@@ -78,6 +81,11 @@ export function AgentSettings() {
     // Detect once when the settings section opens; manual refresh stays explicit after that.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!initialAgentId) return;
+    initialAgentRef.current?.scrollIntoView({ block: "nearest" });
+  }, [initialAgentId]);
 
   const addCustom = () => {
     const agent = createCustomAgent();
@@ -113,7 +121,11 @@ export function AgentSettings() {
         {agents.map((agent) => {
           const isExpanded = expanded === agent.id;
           return (
-            <div key={agent.id} className="agent-settings-row">
+            <div
+              key={agent.id}
+              ref={agent.id === initialAgentId ? initialAgentRef : undefined}
+              className="agent-settings-row"
+            >
               <div className="agent-settings-main">
                 <AgentAvatar agent={agent} />
                 <div className="agent-settings-meta">
@@ -153,25 +165,25 @@ export function AgentSettings() {
                   <label className="agent-field">
                     <span>{t("agents.name")}</span>
                     <input
+                      {...textInputProps}
                       value={agent.name}
                       onChange={(e) => updateAgent(agent.id, { name: e.target.value })}
-                      spellCheck={false}
                     />
                   </label>
                   <label className="agent-field">
                     <span>{t("agents.command")}</span>
                     <input
+                      {...textInputProps}
                       value={agent.command}
                       onChange={(e) => updateAgent(agent.id, { command: e.target.value })}
-                      spellCheck={false}
                     />
                   </label>
                   <label className="agent-field">
                     <span>{t("agents.args")}</span>
                     <input
+                      {...textInputProps}
                       value={agent.args}
                       onChange={(e) => updateAgent(agent.id, { args: e.target.value })}
-                      spellCheck={false}
                     />
                   </label>
                   <label className="agent-field agent-runtime-toggle">
@@ -186,64 +198,84 @@ export function AgentSettings() {
                     <div className="agent-runtime-fields">
                       <label className="agent-field">
                         <span>{t("agents.runtimeProtocol")}</span>
-                        <select value="acp" disabled>
-                          <option value="acp">ACP</option>
+                        <select value={agent.runtime.protocol} disabled>
+                          <option value="acp">Agent Client Protocol (stdio)</option>
+                          <option value="acp-http">Agent Communication Protocol 0.2 (HTTP)</option>
                         </select>
                       </label>
-                      <label className="agent-field">
-                        <span>{t("agents.runtimeCommand")}</span>
-                        <input
-                          value={agent.runtime.command}
-                          onChange={(event) => updateRuntime(agent, { command: event.target.value })}
-                          spellCheck={false}
-                        />
-                      </label>
-                      <label className="agent-field">
-                        <span>{t("agents.runtimeArgs")}</span>
-                        <input
-                          value={agent.runtime.args}
-                          onChange={(event) => updateRuntime(agent, { args: event.target.value })}
-                          spellCheck={false}
-                        />
-                      </label>
-                      <label className="agent-field">
-                        <span>{t("agents.runtimeDistribution")}</span>
-                        <select
-                          value={agent.runtime.distribution}
-                          onChange={(event) =>
-                            updateRuntime(agent, {
-                              distribution: event.target.value as AgentRuntimeConfig["distribution"],
-                            })
-                          }
-                        >
-                          <option value="system">{t("agents.runtimeSystem")}</option>
-                          <option value="managed" disabled>{t("agents.runtimeManaged")}</option>
-                          <option value="custom">{t("agents.runtimeCustom")}</option>
-                        </select>
-                      </label>
-                      <label className="agent-field">
-                        <span>{t("agents.runtimeModels")}</span>
-                        <select
-                          value={agent.runtime.modelSource}
-                          onChange={(event) =>
-                            updateRuntime(agent, {
-                              modelSource: event.target.value as AgentRuntimeConfig["modelSource"],
-                            })
-                          }
-                        >
-                          <option value="agent">{t("agents.runtimeModelsAgent")}</option>
-                          <option value="termany" disabled>{t("agents.runtimeModelsTermany")}</option>
-                        </select>
-                      </label>
+                      {agent.runtime.protocol === "acp-http" ? (
+                        <>
+                          <label className="agent-field">
+                            <span>ACP endpoint</span>
+                            <input
+                              {...textInputProps}
+                              value={agent.runtime.endpoint}
+                              placeholder="http://127.0.0.1:18953/acp"
+                              onChange={(event) => updateRuntime(agent, { endpoint: event.target.value })}
+                            />
+                          </label>
+                          <label className="agent-field">
+                            <span>{t("models.form.apiKey")}</span>
+                            <input
+                              {...textInputProps}
+                              type="password"
+                              value={agent.runtime.apiKey}
+                              placeholder="FASTCLAW_API_KEY"
+                              autoComplete="off"
+                              onChange={(event) => updateRuntime(agent, { apiKey: event.target.value })}
+                            />
+                          </label>
+                        </>
+                      ) : (
+                        <>
+                          <label className="agent-field">
+                            <span>{t("agents.runtimeCommand")}</span>
+                            <input
+                              {...textInputProps}
+                              value={agent.runtime.command}
+                              onChange={(event) => updateRuntime(agent, { command: event.target.value })}
+                            />
+                          </label>
+                          <label className="agent-field">
+                            <span>{t("agents.runtimeArgs")}</span>
+                            <input
+                              {...textInputProps}
+                              value={agent.runtime.args}
+                              onChange={(event) => updateRuntime(agent, { args: event.target.value })}
+                            />
+                          </label>
+                          <label className="agent-field">
+                            <span>{t("agents.runtimeDistribution")}</span>
+                            <select
+                              value={agent.runtime.distribution}
+                              onChange={(event) => updateRuntime(agent, { distribution: event.target.value })}
+                            >
+                              <option value="system">{t("agents.runtimeSystem")}</option>
+                              <option value="managed" disabled>{t("agents.runtimeManaged")}</option>
+                              <option value="custom">{t("agents.runtimeCustom")}</option>
+                            </select>
+                          </label>
+                          <label className="agent-field">
+                            <span>{t("agents.runtimeModels")}</span>
+                            <select
+                              value={agent.runtime.modelSource}
+                              onChange={(event) => updateRuntime(agent, { modelSource: event.target.value })}
+                            >
+                              <option value="agent">{t("agents.runtimeModelsAgent")}</option>
+                              <option value="termany" disabled>{t("agents.runtimeModelsTermany")}</option>
+                            </select>
+                          </label>
+                        </>
+                      )}
                     </div>
                   )}
                   {!agent.builtIn && (
                     <label className="agent-field">
                       <span>{t("agents.iconUrl")}</span>
                       <input
+                        {...textInputProps}
                         value={agent.icon ?? ""}
                         onChange={(e) => updateAgent(agent.id, { icon: e.target.value })}
-                        spellCheck={false}
                       />
                     </label>
                   )}

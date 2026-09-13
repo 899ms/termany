@@ -62,4 +62,11 @@ describe("resolveExecutable", { skip: HAS_ZSH ? false : "needs /bin/zsh" }, () =
     fs.writeFileSync(plain, "", { mode: 0o644 });
     assert.equal(await resolveExecutable(plain), undefined);
   });
+
+  test("rejects a script whose shebang interpreter was removed", async () => {
+    const broken = path.join(binDir, "termany-broken-fixture");
+    fs.writeFileSync(broken, "#!/missing/termany/python\n", { mode: 0o755 });
+    assert.equal(await resolveExecutable("termany-broken-fixture"), undefined);
+    assert.equal(await resolveExecutable(broken), undefined);
+  });
 });

@@ -1,3 +1,4 @@
+import { AGENT_RUNTIME_REVISION, defaultAgentRuntime, inheritsDefaultAgentRuntime } from "@termany/core";
 import { useEffect, useState } from "react";
 import { apiPath } from "./api";
 import claudeIcon from "./assets/agents/claudecode.svg?url";
@@ -19,11 +20,9 @@ const AGENTS_CHANGED_EVENT = "termany:agents-changed";
 // can strip stale localStorage entries instead of resurrecting them as
 // "custom" agents.
 const REMOVED_AGENT_IDS = new Set(["charm"]);
-// Bumped whenever a built-in gains or changes its ACP adapter. Registries saved
-// before the bump still carry `runtime: null` for it, which normalize() must
-// read as "predates the adapter" rather than "the user turned it off". Keep in
-// sync with RUNTIME_REVISION in apps/server/src/agentConfig.ts.
-const RUNTIME_REVISION = 1;
+// Shared with the server. Each adapter's introduction revision determines
+// whether a saved null predates support or is an explicit user opt-out.
+const RUNTIME_REVISION = AGENT_RUNTIME_REVISION;
 
 export type AgentConfig = {
   id: string;
@@ -46,6 +45,10 @@ export type AgentRuntimeConfig = {
   args: string;
   distribution: "managed" | "system" | "custom";
   modelSource: "termany" | "agent";
+} | {
+  protocol: "acp-http";
+  endpoint: string;
+  apiKey: string;
 };
 
 type StoredAgentConfig = Partial<Omit<AgentConfig, "builtIn" | "detected" | "detectedPath" | "runtime">> & {
@@ -65,13 +68,7 @@ export const DEFAULT_AGENTS: AgentConfig[] = [
     enabled: true,
     icon: claudeIcon,
     builtIn: true,
-    runtime: {
-      protocol: "acp",
-      command: "npx",
-      args: "-y @agentclientprotocol/claude-agent-acp",
-      distribution: "system",
-      modelSource: "agent",
-    },
+    runtime: defaultAgentRuntime("claude"),
   },
   {
     id: "codex",
@@ -81,13 +78,7 @@ export const DEFAULT_AGENTS: AgentConfig[] = [
     enabled: true,
     icon: codexIcon,
     builtIn: true,
-    runtime: {
-      protocol: "acp",
-      command: "npx",
-      args: "-y @agentclientprotocol/codex-acp",
-      distribution: "system",
-      modelSource: "agent",
-    },
+    runtime: defaultAgentRuntime("codex"),
   },
   {
     id: "gemini",
@@ -97,6 +88,7 @@ export const DEFAULT_AGENTS: AgentConfig[] = [
     enabled: false,
     icon: geminiIcon,
     builtIn: true,
+    runtime: defaultAgentRuntime("gemini"),
   },
   {
     id: "openclaw",
@@ -106,6 +98,7 @@ export const DEFAULT_AGENTS: AgentConfig[] = [
     enabled: true,
     icon: openClawIcon,
     builtIn: true,
+    runtime: defaultAgentRuntime("openclaw"),
   },
   {
     id: "fastclaw",
@@ -115,6 +108,7 @@ export const DEFAULT_AGENTS: AgentConfig[] = [
     enabled: false,
     icon: fastClawIcon,
     builtIn: true,
+    runtime: defaultAgentRuntime("fastclaw"),
   },
   {
     id: "hermes",
@@ -124,6 +118,7 @@ export const DEFAULT_AGENTS: AgentConfig[] = [
     enabled: false,
     icon: hermesIcon,
     builtIn: true,
+    runtime: defaultAgentRuntime("hermes"),
   },
   {
     id: "opencode",
@@ -133,13 +128,7 @@ export const DEFAULT_AGENTS: AgentConfig[] = [
     enabled: false,
     icon: opencodeIcon,
     builtIn: true,
-    runtime: {
-      protocol: "acp",
-      command: "opencode",
-      args: "acp",
-      distribution: "system",
-      modelSource: "agent",
-    },
+    runtime: defaultAgentRuntime("opencode"),
   },
   {
     id: "kilocode",
@@ -149,6 +138,7 @@ export const DEFAULT_AGENTS: AgentConfig[] = [
     enabled: false,
     icon: kilocodeIcon,
     builtIn: true,
+    runtime: defaultAgentRuntime("kilocode"),
   },
   {
     id: "cursor",
@@ -158,6 +148,7 @@ export const DEFAULT_AGENTS: AgentConfig[] = [
     enabled: false,
     icon: cursorIcon,
     builtIn: true,
+    runtime: defaultAgentRuntime("cursor"),
   },
   {
     id: "kimi",
@@ -167,6 +158,7 @@ export const DEFAULT_AGENTS: AgentConfig[] = [
     enabled: false,
     icon: kimiIcon,
     builtIn: true,
+    runtime: defaultAgentRuntime("kimi"),
   },
   {
     id: "droid",
@@ -176,6 +168,7 @@ export const DEFAULT_AGENTS: AgentConfig[] = [
     enabled: false,
     icon: droidIcon,
     builtIn: true,
+    runtime: defaultAgentRuntime("droid"),
   },
   {
     id: "omp",
@@ -185,6 +178,7 @@ export const DEFAULT_AGENTS: AgentConfig[] = [
     enabled: false,
     icon: ompIcon,
     builtIn: true,
+    runtime: defaultAgentRuntime("omp"),
   },
 ];
 
@@ -220,10 +214,8 @@ function normalize(saved: StoredAgentConfig[]): AgentConfig[] {
       const base = defaultById.get(id);
       const stored = savedById.get(id);
       if (base) {
-        // A stored `null` only counts as an explicit opt-out once the entry has
-        // seen the current defaults; older ones predate the built-in's adapter.
-        const stale = !stored?.runtimeRevision || stored.runtimeRevision < RUNTIME_REVISION;
-        const inherit = !stored || !("runtime" in stored) || (stored.runtime == null && stale);
+        // Preserve opt-outs for existing adapters when new ones are introduced.
+        const inherit = !stored || inheritsDefaultAgentRuntime(stored);
         return {
           ...base,
           ...stored,
@@ -295,6 +287,7 @@ export async function syncAgentConfigs(): Promise<AgentConfig[]> {
 }
 
 export function agentCommand(agent: AgentConfig) {
+  if (agent.runtime?.protocol === "acp-http") return agent.runtime.endpoint;
   return [agent.command.trim(), agent.args.trim()].filter(Boolean).join(" ");
 }
 
@@ -311,21 +304,24 @@ export function createCustomAgent(): AgentConfig {
 }
 
 export async function detectAgentConfigs(agents: AgentConfig[]): Promise<AgentConfig[]> {
-  const commands = agents.map((agent) => agent.command).filter(Boolean);
   const res = await fetch(apiPath("/api/agents/detect"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ commands }),
+    body: JSON.stringify({
+      agents: agents.map(({ id, name, command, args, enabled, builtIn, runtime, runtimeRevision }) => ({
+        id, name, command, args, enabled, builtIn, runtime, runtimeRevision,
+      })),
+    }),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error ?? `request failed (${res.status})`);
-  const byCommand = new Map(
+  const byId = new Map(
     (Array.isArray(data.results) ? data.results : []).map((r: any) => [
-      String(r.command),
+      String(r.id),
       { detected: Boolean(r.installed), detectedPath: typeof r.path === "string" ? r.path : undefined },
     ])
   );
-  return agents.map((agent) => ({ ...agent, ...(byCommand.get(agent.command) ?? {}) }));
+  return agents.map((agent) => ({ ...agent, ...(byId.get(agent.id) ?? {}) }));
 }
 
 export function useAgentConfigs() {
