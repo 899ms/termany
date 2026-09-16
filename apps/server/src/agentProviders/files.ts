@@ -30,7 +30,7 @@ export interface SnapshotFile {
 export interface Snapshot {
   id: string;
   at: number;
-  appId: AppId;
+  appId: AppId | "hermes";
   providerName: string;
   files: SnapshotFile[];
 }
@@ -66,7 +66,7 @@ export function atomicWrite(file: string, contents: string): void {
 }
 
 /** Snapshot every file an apply is about to touch, before it touches any. */
-export function snapshot(appId: AppId, providerName: string, files: string[]): Snapshot {
+export function snapshot(appId: AppId | "hermes", providerName: string, files: string[]): Snapshot {
   const id = new Date().toISOString().replace(/[:.]/g, "-");
   const entry: Snapshot = {
     id,
@@ -85,7 +85,7 @@ export function snapshot(appId: AppId, providerName: string, files: string[]): S
   return entry;
 }
 
-function prune(appId: AppId): void {
+function prune(appId: AppId | "hermes"): void {
   const directory = path.join(backupRoot(), appId);
   let names: string[];
   try {

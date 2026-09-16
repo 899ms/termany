@@ -34,9 +34,9 @@ const RAIL_ITEMS: Array<{ view: PaneView; icon: () => JSX.Element }> = [
 /** Dashboard shortcuts stay below the agent launcher, matching the rail's
  * existing visual order, but use the same new-pane path as every item above. */
 const DASHBOARD_RAIL_ITEMS: Array<{ view: PaneView; icon: () => JSX.Element }> = [
-  { view: "providers", icon: ProviderIcon },
   { view: "history", icon: HistoryIcon },
   { view: "usage", icon: ChartIcon },
+  { view: "providers", icon: ProviderIcon },
 ];
 
 /**

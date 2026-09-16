@@ -34,6 +34,7 @@ import { listSshConnections, listSshProfiles, saveSshProfileFromTarget, saveSshP
 import { SshPortForwarding } from "./sshPortForwarding.js";
 import { WebSocketServer, type WebSocket } from "ws";
 import { listConfig, saveConfig } from "./config.js";
+import { gatewayState, saveGatewayRoute, connectGatewayRoute, disconnectGatewayRoute, gatewayConnection, proxyGatewayRequest } from "./modelGateway.js";
 import {
   APP_IDS,
   applyProvider,
@@ -650,6 +651,30 @@ const http = createServer((req, res) => {
     json(500, { error: msg });
   };
   const reqUrl = new URL(req.url ?? "/", "http://localhost");
+
+  if (reqUrl.pathname.startsWith("/gateway/")) {
+    void proxyGatewayRequest(req, res).catch(fail);
+    return;
+  }
+  if (req.method === "GET" && reqUrl.pathname === "/api/model-gateway") {
+    try { json(200, gatewayState(PORT)); } catch (error) { fail(error); }
+    return;
+  }
+  if (req.method === "POST" && reqUrl.pathname.startsWith("/api/model-gateway/")) {
+    readJson(req).then((body) => {
+      const id = String(body?.id ?? "");
+      switch (reqUrl.pathname) {
+        case "/api/model-gateway/routes": saveGatewayRoute(body); break;
+        case "/api/model-gateway/connect": connectGatewayRoute(id, PORT); break;
+        case "/api/model-gateway/disconnect": disconnectGatewayRoute(id); break;
+        case "/api/model-gateway/delete": disconnectGatewayRoute(id, true); break;
+        case "/api/model-gateway/connection": json(200, gatewayConnection(id, PORT)); return;
+        default: json(404, { error: "Unknown gateway operation" }); return;
+      }
+      json(200, gatewayState(PORT));
+    }).catch((error) => json(400, { error: error instanceof Error ? error.message : String(error) }));
+    return;
+  }
 
   // Agent activity is server-owned so every app window reads the same state.
   // SSE pushes complete snapshots, making reconnects self-healing instead of
