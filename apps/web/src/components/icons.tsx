@@ -29,6 +29,7 @@ import {
   Bot,
   BookOpen,
   Cable,
+  Plug,
   ChartColumn,
   Check,
   Copy,
@@ -293,6 +294,11 @@ export function FlaskIcon() {
 /** Spinning loader for in-flight actions. */
 export function SpinnerIcon() {
   return <Loader2 {...base} className="spin" />;
+}
+
+/** Plug glyph — model providers for the agent CLIs on this machine. */
+export function ProviderIcon() {
+  return <Plug {...base} />;
 }
 
 /** Branch glyph — the git diff viewer. */
