@@ -132,7 +132,7 @@ export default {
   "rail.newPane": "Nuevo panel de {view}",
   "rail.runAgent": "Ejecutar agente",
   "providers.title": "Proveedores de modelos",
-  "providers.close": "Cerrar",
+  "providers.back": "Atrás",
   "providers.none": "Sin anulación",
   "providers.noneDetail": "Mantener la sesión que ya tiene esta app",
   "providers.officialLogin": "Inicio de sesión oficial",
@@ -347,6 +347,7 @@ export default {
   "pane.view.monitor": "Monitor de actividad",
   "pane.view.history": "Historial de sesiones",
   "pane.view.usage": "Uso de agentes",
+  "pane.view.providers": "Proveedores de modelos",
   "pane.openInBrowser": "Abrir {url} en el navegador",
   "pane.servedUrls": "Abrir un puerto que sirve este panel",
 

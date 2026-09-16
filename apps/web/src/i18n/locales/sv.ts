@@ -132,7 +132,7 @@ export default {
   "rail.newPane": "Ny panel: {view}",
   "rail.runAgent": "Kör agent",
   "providers.title": "Modelleverantörer",
-  "providers.close": "Stäng",
+  "providers.back": "Tillbaka",
   "providers.none": "Ingen åsidosättning",
   "providers.noneDetail": "Behåll inloggningen appen redan har",
   "providers.officialLogin": "Officiell inloggning",
@@ -347,6 +347,7 @@ export default {
   "pane.view.monitor": "Aktivitetskontroll",
   "pane.view.history": "Sessionshistorik",
   "pane.view.usage": "Agentanvändning",
+  "pane.view.providers": "Modelleverantörer",
   "pane.openInBrowser": "Öppna {url} i webbläsaren",
   "pane.servedUrls": "Öppna en port som den här panelen betjänar",
 

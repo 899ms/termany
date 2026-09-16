@@ -132,7 +132,7 @@ export default {
   "rail.newPane": "新規{view}ペイン",
   "rail.runAgent": "エージェントを実行",
   "providers.title": "モデルプロバイダー",
-  "providers.close": "閉じる",
+  "providers.back": "戻る",
   "providers.none": "上書きしない",
   "providers.noneDetail": "このアプリの既存のログインを保持",
   "providers.officialLogin": "公式ログイン",
@@ -347,6 +347,7 @@ export default {
   "pane.view.monitor": "アクティビティモニタ",
   "pane.view.history": "セッション履歴",
   "pane.view.usage": "エージェント使用量",
+  "pane.view.providers": "モデルプロバイダー",
   "pane.openInBrowser": "{url} をブラウザで開く",
   "pane.servedUrls": "このペインが公開しているポートを開く",
 

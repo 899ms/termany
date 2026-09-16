@@ -132,7 +132,7 @@ export default {
   "rail.newPane": "Panel {view} baru",
   "rail.runAgent": "Jalankan agen",
   "providers.title": "Penyedia model",
-  "providers.close": "Tutup",
+  "providers.back": "Kembali",
   "providers.none": "Tanpa penggantian",
   "providers.noneDetail": "Pertahankan login yang sudah dimiliki aplikasi ini",
   "providers.officialLogin": "Login resmi",
@@ -347,6 +347,7 @@ export default {
   "pane.view.monitor": "Monitor aktivitas",
   "pane.view.history": "Riwayat sesi",
   "pane.view.usage": "Pemakaian agen",
+  "pane.view.providers": "Penyedia model",
   "pane.openInBrowser": "Buka {url} di peramban",
   "pane.servedUrls": "Buka porta yang dilayani panel ini",
 

@@ -132,7 +132,7 @@ export default {
   "rail.newPane": "Khung mới: {view}",
   "rail.runAgent": "Chạy tác nhân",
   "providers.title": "Nhà cung cấp mô hình",
-  "providers.close": "Đóng",
+  "providers.back": "Quay lại",
   "providers.none": "Không ghi đè",
   "providers.noneDetail": "Giữ nguyên đăng nhập mà ứng dụng này đang có",
   "providers.officialLogin": "Đăng nhập chính thức",
@@ -347,6 +347,7 @@ export default {
   "pane.view.monitor": "Giám sát hoạt động",
   "pane.view.history": "Lịch sử phiên",
   "pane.view.usage": "Mức dùng của tác nhân",
+  "pane.view.providers": "Nhà cung cấp mô hình",
   "pane.openInBrowser": "Mở {url} trong trình duyệt",
   "pane.servedUrls": "Mở một cổng mà khung này đang phục vụ",
 

@@ -129,7 +129,7 @@ export default {
   "rail.newPane": "New {view} pane",
   "rail.runAgent": "Run agent",
   "providers.title": "Model providers",
-  "providers.close": "Close",
+  "providers.back": "Back",
   "providers.none": "No override",
   "providers.noneDetail": "Keep the login this app already has",
   "providers.officialLogin": "Official login",
@@ -348,6 +348,7 @@ export default {
   "pane.view.monitor": "Activity monitor",
   "pane.view.history": "Session history",
   "pane.view.usage": "Agent usage",
+  "pane.view.providers": "Model providers",
   "pane.openInBrowser": "Open {url} in browser",
   "pane.servedUrls": "Open a port this pane is serving",
 

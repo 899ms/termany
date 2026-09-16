@@ -132,7 +132,7 @@ export default {
   "rail.newPane": "새 {view} 창",
   "rail.runAgent": "에이전트 실행",
   "providers.title": "모델 공급자",
-  "providers.close": "닫기",
+  "providers.back": "뒤로",
   "providers.none": "재정의 안 함",
   "providers.noneDetail": "이 앱의 기존 로그인 유지",
   "providers.officialLogin": "공식 로그인",
@@ -347,6 +347,7 @@ export default {
   "pane.view.monitor": "활성 상태 보기",
   "pane.view.history": "세션 기록",
   "pane.view.usage": "에이전트 사용량",
+  "pane.view.providers": "모델 공급자",
   "pane.openInBrowser": "브라우저에서 {url} 열기",
   "pane.servedUrls": "이 창이 제공 중인 포트 열기",
 

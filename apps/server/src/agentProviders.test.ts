@@ -209,6 +209,19 @@ test("secrets are masked on read and a masked write keeps the stored value", asy
   assert.equal(providers.findProvider("p")?.name, "P renamed");
 });
 
+test("editing a provider leaves it where it sat in the list", async () => {
+  await reset();
+  for (const [id, name] of [["first", "First"], ["second", "Second"]] as const) {
+    providers.upsertProvider({ id, appId: "codex", name, category: "custom", env: {} });
+  }
+  const order = () => providers.listProviders().providers.map((entry) => entry.name);
+  assert.deepEqual(order(), ["First", "Second"]);
+
+  // A rename carries no sortIndex — the edit form has no field for it.
+  providers.upsertProvider({ id: "first", appId: "codex", name: "First renamed", category: "custom", env: {} });
+  assert.deepEqual(order(), ["First renamed", "Second"], "rename did not reorder");
+});
+
 test("rolling back restores the file a switch overwrote", async () => {
   const directory = await reset();
   mkdirSync(path.join(directory, ".claude"), { recursive: true });

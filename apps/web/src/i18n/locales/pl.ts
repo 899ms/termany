@@ -133,7 +133,7 @@ export default {
   "rail.newPane": "Nowy panel: {view}",
   "rail.runAgent": "Uruchom agenta",
   "providers.title": "Dostawcy modeli",
-  "providers.close": "Zamknij",
+  "providers.back": "Wstecz",
   "providers.none": "Bez nadpisania",
   "providers.noneDetail": "Zachowaj logowanie, które ta aplikacja już ma",
   "providers.officialLogin": "Logowanie oficjalne",
@@ -348,6 +348,7 @@ export default {
   "pane.view.monitor": "Monitor aktywności",
   "pane.view.history": "Historia sesji",
   "pane.view.usage": "Zużycie agentów",
+  "pane.view.providers": "Dostawcy modeli",
   "pane.openInBrowser": "Otwórz {url} w przeglądarce",
   "pane.servedUrls": "Otwórz port udostępniany przez ten panel",
 

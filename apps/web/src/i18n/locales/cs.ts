@@ -133,7 +133,7 @@ export default {
   "rail.newPane": "Nový panel: {view}",
   "rail.runAgent": "Spustit agenta",
   "providers.title": "Poskytovatelé modelů",
-  "providers.close": "Zavřít",
+  "providers.back": "Zpět",
   "providers.none": "Bez přepsání",
   "providers.noneDetail": "Ponechat přihlášení, které aplikace už má",
   "providers.officialLogin": "Oficiální přihlášení",
@@ -348,6 +348,7 @@ export default {
   "pane.view.monitor": "Monitor aktivity",
   "pane.view.history": "Historie relací",
   "pane.view.usage": "Spotřeba agentů",
+  "pane.view.providers": "Poskytovatelé modelů",
   "pane.openInBrowser": "Otevřít {url} v prohlížeči",
   "pane.servedUrls": "Otevřít port, který tento panel poskytuje",
 

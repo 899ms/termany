@@ -132,7 +132,7 @@ export default {
   "rail.newPane": "Yeni bölme: {view}",
   "rail.runAgent": "Aracıyı çalıştır",
   "providers.title": "Model sağlayıcıları",
-  "providers.close": "Kapat",
+  "providers.back": "Geri",
   "providers.none": "Geçersiz kılma yok",
   "providers.noneDetail": "Bu uygulamanın mevcut oturumunu koru",
   "providers.officialLogin": "Resmî oturum",
@@ -347,6 +347,7 @@ export default {
   "pane.view.monitor": "Etkinlik izleyici",
   "pane.view.history": "Oturum geçmişi",
   "pane.view.usage": "Aracı kullanımı",
+  "pane.view.providers": "Model sağlayıcıları",
   "pane.openInBrowser": "{url} adresini tarayıcıda aç",
   "pane.servedUrls": "Bu bölmenin sunduğu bir bağlantı noktasını aç",
 

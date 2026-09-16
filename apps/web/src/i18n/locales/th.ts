@@ -133,7 +133,7 @@ export default {
   "rail.newPane": "บานหน้าต่างใหม่: {view}",
   "rail.runAgent": "เรียกใช้เอเจนต์",
   "providers.title": "ผู้ให้บริการโมเดล",
-  "providers.close": "ปิด",
+  "providers.back": "ย้อนกลับ",
   "providers.none": "ไม่แทนที่",
   "providers.noneDetail": "คงการเข้าสู่ระบบเดิมของแอปนี้ไว้",
   "providers.officialLogin": "การเข้าสู่ระบบอย่างเป็นทางการ",
@@ -348,6 +348,7 @@ export default {
   "pane.view.monitor": "ตัวตรวจสอบกิจกรรม",
   "pane.view.history": "ประวัติเซสชัน",
   "pane.view.usage": "การใช้งานของเอเจนต์",
+  "pane.view.providers": "ผู้ให้บริการโมเดล",
   "pane.openInBrowser": "เปิด {url} ในเบราว์เซอร์",
   "pane.servedUrls": "เปิดพอร์ตที่บานหน้าต่างนี้ให้บริการอยู่",
 

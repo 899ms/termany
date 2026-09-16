@@ -136,6 +136,12 @@ export function upsertProvider(input: unknown): AgentProvider {
   if (!incoming) throw new Error("provider needs an id and a known appId");
   const prior = store.providers.find((entry) => entry.id === incoming.id);
   if (prior) {
+    // An edit that does not say where the provider sits keeps where it sat.
+    // Otherwise saving a rename would send it to the end of its app's list,
+    // silently reordering rows the user arranged.
+    if (!Number.isFinite((input as { sortIndex?: unknown })?.sortIndex)) {
+      incoming.sortIndex = prior.sortIndex;
+    }
     for (const [name, value] of Object.entries(incoming.env)) {
       if (isSecretEnv(name) && (!value || MASK.test(value))) {
         incoming.env[name] = prior.env[name] ?? "";

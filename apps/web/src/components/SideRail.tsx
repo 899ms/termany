@@ -1,9 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { agentCommand, type AgentConfig, useAgentConfigs } from "../agents";
 import { useI18n } from "../i18n";
 import { withShortcut } from "../keybindings";
 import { registerOccluder, unregisterOccluder } from "../nativeViewOcclusion";
-import { ProviderPanel } from "./ProviderPanel";
 import { activeHtab, useStore, type PaneView } from "../state/store";
 import { queueCommand } from "../terminal/manager";
 import {
@@ -35,6 +34,7 @@ const RAIL_ITEMS: Array<{ view: PaneView; icon: () => JSX.Element }> = [
 /** Dashboard shortcuts stay below the agent launcher, matching the rail's
  * existing visual order, but use the same new-pane path as every item above. */
 const DASHBOARD_RAIL_ITEMS: Array<{ view: PaneView; icon: () => JSX.Element }> = [
+  { view: "providers", icon: ProviderIcon },
   { view: "history", icon: HistoryIcon },
   { view: "usage", icon: ChartIcon },
 ];
@@ -67,11 +67,6 @@ export function SideRail({
   const agents = useAgentConfigs().filter((agent) => agent.enabled || agent.runtime);
   const agentsRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  // Provider switching is frequent, so the panel lives beside the rail rather
-  // than behind a pane or a Settings section. Its state is local: nothing
-  // outside the rail opens it.
-  const [providersOpen, setProvidersOpen] = useState(false);
-  const providersRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!agentsOpen) return;
@@ -86,22 +81,6 @@ export function SideRail({
     if (!railVisibility.agents && agentsOpen) onAgentsOpenChange(false);
   }, [agentsOpen, onAgentsOpenChange, railVisibility.agents]);
 
-  // mousedown, not click: a button inside the panel (edit, import) re-renders
-  // the panel and unmounts the row that was clicked, so by the time a click
-  // listener runs the event target is detached and contains() reads false —
-  // which would dismiss the panel on its own controls.
-  useEffect(() => {
-    if (!providersOpen) return;
-    const onPointerDown = (event: MouseEvent) => {
-      if (!providersRef.current?.contains(event.target as Node)) setProvidersOpen(false);
-    };
-    window.addEventListener("mousedown", onPointerDown);
-    return () => window.removeEventListener("mousedown", onPointerDown);
-  }, [providersOpen]);
-
-  useEffect(() => {
-    if (!railVisibility.providers && providersOpen) setProvidersOpen(false);
-  }, [providersOpen, railVisibility.providers]);
 
   // Only blanks the web/office preview pane(s) this dropdown actually
   // overlaps, not every native webview in the workspace (see nativeViewOcclusion).
@@ -197,18 +176,6 @@ export function SideRail({
               </button>
             </div>
           )}
-        </div>
-      )}
-      {railVisibility.providers && (
-        <div className="side-rail-providers" ref={providersRef}>
-          <button
-            className={`side-rail-btn ${providersOpen ? "active" : ""}`}
-            title={t("providers.title")}
-            onClick={() => setProvidersOpen(!providersOpen)}
-          >
-            <ProviderIcon />
-          </button>
-          {providersOpen && <ProviderPanel onClose={() => setProvidersOpen(false)} />}
         </div>
       )}
       {DASHBOARD_RAIL_ITEMS.filter(({ view }) => railVisibility[view]).map(({ view, icon: Icon }) => (

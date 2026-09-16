@@ -129,7 +129,7 @@ export default {
   "rail.newPane": "新增{view}窗格",
   "rail.runAgent": "執行代理",
   "providers.title": "模型供應商",
-  "providers.close": "關閉",
+  "providers.back": "返回",
   "providers.none": "不覆寫",
   "providers.noneDetail": "保持該應用原有的登入",
   "providers.officialLogin": "官方登入",
@@ -347,6 +347,7 @@ export default {
   "pane.view.monitor": "活動監視器",
   "pane.view.history": "工作階段紀錄",
   "pane.view.usage": "代理用量",
+  "pane.view.providers": "模型供應商",
   "pane.openInBrowser": "在瀏覽器中開啟 {url}",
   "pane.servedUrls": "開啟這個窗格提供服務的連接埠",
 

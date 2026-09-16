@@ -133,7 +133,7 @@ export default {
   "rail.newPane": "नया {view} पेन",
   "rail.runAgent": "एजेंट चलाएँ",
   "providers.title": "मॉडल प्रदाता",
-  "providers.close": "बंद करें",
+  "providers.back": "वापस",
   "providers.none": "कोई ओवरराइड नहीं",
   "providers.noneDetail": "इस ऐप का मौजूदा लॉगिन बनाए रखें",
   "providers.officialLogin": "आधिकारिक लॉगिन",
@@ -348,6 +348,7 @@ export default {
   "pane.view.monitor": "गतिविधि मॉनिटर",
   "pane.view.history": "सत्र इतिहास",
   "pane.view.usage": "एजेंट खपत",
+  "pane.view.providers": "मॉडल प्रदाता",
   "pane.openInBrowser": "{url} ब्राउज़र में खोलें",
   "pane.servedUrls": "इस पेन द्वारा सर्व किया जा रहा पोर्ट खोलें",
 

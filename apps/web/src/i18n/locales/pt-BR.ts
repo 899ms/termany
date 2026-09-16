@@ -132,7 +132,7 @@ export default {
   "rail.newPane": "Novo painel de {view}",
   "rail.runAgent": "Executar agente",
   "providers.title": "Provedores de modelo",
-  "providers.close": "Fechar",
+  "providers.back": "Voltar",
   "providers.none": "Sem substituição",
   "providers.noneDetail": "Manter o login que este app já tem",
   "providers.officialLogin": "Login oficial",
@@ -347,6 +347,7 @@ export default {
   "pane.view.monitor": "Monitor de atividade",
   "pane.view.history": "Histórico de sessões",
   "pane.view.usage": "Uso dos agentes",
+  "pane.view.providers": "Provedores de modelo",
   "pane.openInBrowser": "Abrir {url} no navegador",
   "pane.servedUrls": "Abrir uma porta servida por este painel",
 

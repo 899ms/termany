@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   CANONICAL_ENV,
   deleteProvider,
@@ -18,9 +18,8 @@ import {
   type ProviderView,
 } from "../agentProviders";
 import { useI18n } from "../i18n";
-import { registerOccluder, unregisterOccluder } from "../nativeViewOcclusion";
 import { textInputProps } from "../textInputProps";
-import { CheckIcon, CloseIcon, EditIcon, HistoryIcon, PlusIcon, SpinnerIcon, TrashIcon } from "./icons";
+import { BackIcon, CheckIcon, EditIcon, HistoryIcon, PlusIcon, ProviderIcon, SpinnerIcon, TrashIcon } from "./icons";
 
 /** Local edit state. Canonical fields map onto each app's own env names. */
 interface Draft {
@@ -117,12 +116,11 @@ function fromDraft(draft: Draft): Partial<ProviderView> {
 }
 
 /**
- * Model providers for the agent CLIs installed on this machine.
- *
- * Slides out beside the rail rather than opening a pane: switching is a
- * frequent action, and a pane would make it a layout decision every time.
+ * Model providers for the agent CLIs installed on this machine — a pane view,
+ * like Agent usage and Session history, so it splits, tiles and stays open
+ * alongside the terminal it is being configured for.
  */
-export function ProviderPanel({ onClose }: { onClose: () => void }) {
+export function ProviderPane() {
   const { t } = useI18n();
   const [payload, setPayload] = useState<ProviderPayload | null>(null);
   const [error, setError] = useState("");
@@ -131,8 +129,6 @@ export function ProviderPanel({ onClose }: { onClose: () => void }) {
   const [candidates, setCandidates] = useState<ImportCandidate[] | null>(null);
   const [backups, setBackups] = useState<{ appId: AppId; entries: BackupEntry[] } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<ProviderView | null>(null);
-  const panelRef = useRef<HTMLDivElement>(null);
-  const occluderId = useId();
 
   const run = async (key: string, action: () => Promise<ProviderPayload | void>) => {
     setBusy(key);
@@ -153,44 +149,36 @@ export function ProviderPanel({ onClose }: { onClose: () => void }) {
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
   }, []);
 
-  // Blank only the native webview(s) this panel actually covers, not every one
-  // in the workspace (see nativeViewOcclusion).
-  useEffect(() => {
-    const element = panelRef.current;
-    if (!element) return;
-    const update = () => registerOccluder(occluderId, element.getBoundingClientRect());
-    update();
-    window.addEventListener("resize", update);
-    return () => {
-      window.removeEventListener("resize", update);
-      unregisterOccluder(occluderId);
-    };
-  }, [occluderId, draft, candidates, backups]);
-
+  // Escape leaves a sub-view. Closing the pane itself belongs to the pane
+  // header, the same as every other view.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       if (draft) setDraft(null);
       else if (candidates) setCandidates(null);
       else if (backups) setBackups(null);
-      else onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [backups, candidates, draft, onClose]);
+  }, [backups, candidates, draft]);
 
   const header = (title: string, back?: () => void) => (
-    <div className="provider-panel-header">
-      <span className="provider-panel-title">{title}</span>
-      <button className="provider-icon-btn" onClick={back ?? onClose} title={t("providers.close")}>
-        <CloseIcon />
-      </button>
+    <div className="provider-pane-header">
+      {back && (
+        <button className="provider-icon-btn" onClick={back} title={t("providers.back")}>
+          <BackIcon />
+        </button>
+      )}
+      <span className="provider-pane-title">
+        {!back && <ProviderIcon />}
+        <span>{title}</span>
+      </span>
     </div>
   );
 
   if (draft) {
     return (
-      <div className="provider-panel" ref={panelRef}>
+      <div className="provider-pane">
         {header(draft.isNew ? t("providers.addTitle") : t("providers.editTitle"), () => setDraft(null))}
         <ProviderForm
           draft={draft}
@@ -212,9 +200,9 @@ export function ProviderPanel({ onClose }: { onClose: () => void }) {
 
   if (candidates) {
     return (
-      <div className="provider-panel" ref={panelRef}>
+      <div className="provider-pane">
         {header(t("providers.importTitle"), () => setCandidates(null))}
-        <div className="provider-panel-body">
+        <div className="provider-pane-body single">
           {candidates.length === 0 && <div className="provider-empty">{t("providers.importEmpty")}</div>}
           {candidates.map((entry) => (
             <div key={entry.id} className="provider-import-row">
@@ -230,7 +218,7 @@ export function ProviderPanel({ onClose }: { onClose: () => void }) {
             </div>
           ))}
         </div>
-        <div className="provider-panel-footer">
+        <div className="provider-pane-footer">
           <span className="provider-hint">{t("providers.importHint")}</span>
           <button
             className="provider-primary-btn"
@@ -253,9 +241,9 @@ export function ProviderPanel({ onClose }: { onClose: () => void }) {
 
   if (backups) {
     return (
-      <div className="provider-panel" ref={panelRef}>
+      <div className="provider-pane">
         {header(t("providers.backupsTitle"), () => setBackups(null))}
-        <div className="provider-panel-body">
+        <div className="provider-pane-body single">
           {backups.entries.length === 0 && <div className="provider-empty">{t("providers.backupsEmpty")}</div>}
           {backups.entries.map((entry) => (
             <div key={entry.id} className="provider-row">
@@ -285,10 +273,11 @@ export function ProviderPanel({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div className="provider-panel" ref={panelRef}>
+    <div className="provider-pane">
       {header(t("providers.title"))}
-      <div className="provider-panel-body">
+      <div className="provider-pane-body">
         {!payload && !error && <div className="provider-empty"><SpinnerIcon /></div>}
+        <div className="provider-apps">
         {payload?.apps.map((app) => (
           <AppSection
             key={app.appId}
@@ -307,8 +296,9 @@ export function ProviderPanel({ onClose }: { onClose: () => void }) {
             }
           />
         ))}
+        </div>
       </div>
-      <div className="provider-panel-footer">
+      <div className="provider-pane-footer">
         {payload?.ccSwitchAvailable ? (
           <button
             className="provider-text-btn"
@@ -447,7 +437,7 @@ function ProviderForm({
   const set = (patch: Partial<Draft>) => onChange({ ...draft, ...patch });
   return (
     <>
-      <div className="provider-panel-body">
+      <div className="provider-pane-body single">
         <label className="provider-field">
           <span>{t("providers.name")}</span>
           <input {...textInputProps} value={draft.name} onChange={(e) => set({ name: e.target.value })} />
@@ -542,7 +532,7 @@ function ProviderForm({
           <span>{t("providers.addEnv")}</span>
         </button>
       </div>
-      <div className="provider-panel-footer">
+      <div className="provider-pane-footer">
         <button className="provider-text-btn" onClick={onCancel}>
           {t("providers.cancel")}
         </button>

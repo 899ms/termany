@@ -132,7 +132,7 @@ export default {
   "rail.newPane": "Nouveau volet {view}",
   "rail.runAgent": "Lancer un agent",
   "providers.title": "Fournisseurs de modèles",
-  "providers.close": "Fermer",
+  "providers.back": "Retour",
   "providers.none": "Aucun remplacement",
   "providers.noneDetail": "Conserver la connexion déjà utilisée par cette app",
   "providers.officialLogin": "Connexion officielle",
@@ -347,6 +347,7 @@ export default {
   "pane.view.monitor": "Moniteur d'activité",
   "pane.view.history": "Historique des sessions",
   "pane.view.usage": "Consommation des agents",
+  "pane.view.providers": "Fournisseurs de modèles",
   "pane.openInBrowser": "Ouvrir {url} dans le navigateur",
   "pane.servedUrls": "Ouvrir un port servi par ce volet",
 

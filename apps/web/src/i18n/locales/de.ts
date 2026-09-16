@@ -134,7 +134,7 @@ export default {
   "rail.newPane": "Neuer Bereich: {view}",
   "rail.runAgent": "Agent starten",
   "providers.title": "Modellanbieter",
-  "providers.close": "Schließen",
+  "providers.back": "Zurück",
   "providers.none": "Keine Überschreibung",
   "providers.noneDetail": "Die vorhandene Anmeldung dieser App behalten",
   "providers.officialLogin": "Offizielle Anmeldung",
@@ -349,6 +349,7 @@ export default {
   "pane.view.monitor": "Aktivitätsanzeige",
   "pane.view.history": "Sitzungsverlauf",
   "pane.view.usage": "Agenten-Verbrauch",
+  "pane.view.providers": "Modellanbieter",
   "pane.openInBrowser": "{url} im Browser öffnen",
   "pane.servedUrls": "Einen Port öffnen, den dieser Bereich bereitstellt",
 

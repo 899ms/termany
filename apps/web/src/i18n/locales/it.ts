@@ -132,7 +132,7 @@ export default {
   "rail.newPane": "Nuovo riquadro {view}",
   "rail.runAgent": "Esegui agente",
   "providers.title": "Provider di modelli",
-  "providers.close": "Chiudi",
+  "providers.back": "Indietro",
   "providers.none": "Nessuna sostituzione",
   "providers.noneDetail": "Mantieni l'accesso che questa app ha già",
   "providers.officialLogin": "Accesso ufficiale",
@@ -347,6 +347,7 @@ export default {
   "pane.view.monitor": "Monitoraggio attività",
   "pane.view.history": "Cronologia sessioni",
   "pane.view.usage": "Consumo degli agenti",
+  "pane.view.providers": "Provider di modelli",
   "pane.openInBrowser": "Apri {url} nel browser",
   "pane.servedUrls": "Apri una porta servita da questo riquadro",
 

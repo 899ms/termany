@@ -129,7 +129,7 @@ export default {
   "rail.newPane": "新建{view}窗格",
   "rail.runAgent": "运行智能体",
   "providers.title": "模型供应商",
-  "providers.close": "关闭",
+  "providers.back": "返回",
   "providers.none": "不覆盖",
   "providers.noneDetail": "保持该应用原有的登录",
   "providers.officialLogin": "官方登录",
@@ -347,6 +347,7 @@ export default {
   "pane.view.monitor": "活动监视器",
   "pane.view.history": "会话历史",
   "pane.view.usage": "智能体用量",
+  "pane.view.providers": "模型供应商",
   "pane.openInBrowser": "在浏览器中打开 {url}",
   "pane.servedUrls": "打开此窗格监听的端口",
 

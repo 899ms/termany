@@ -132,7 +132,7 @@ export default {
   "rail.newPane": "Nieuw deelvenster: {view}",
   "rail.runAgent": "Agent uitvoeren",
   "providers.title": "Modelproviders",
-  "providers.close": "Sluiten",
+  "providers.back": "Terug",
   "providers.none": "Geen overschrijving",
   "providers.noneDetail": "Behoud de aanmelding die deze app al heeft",
   "providers.officialLogin": "Officiële aanmelding",
@@ -347,6 +347,7 @@ export default {
   "pane.view.monitor": "Activiteitenweergave",
   "pane.view.history": "Sessiegeschiedenis",
   "pane.view.usage": "Agentverbruik",
+  "pane.view.providers": "Modelproviders",
   "pane.openInBrowser": "{url} openen in de browser",
   "pane.servedUrls": "Een poort openen die dit deelvenster aanbiedt",
 

@@ -132,7 +132,7 @@ export default {
   "rail.newPane": "Новая панель «{view}»",
   "rail.runAgent": "Запустить агента",
   "providers.title": "Провайдеры моделей",
-  "providers.close": "Закрыть",
+  "providers.back": "Назад",
   "providers.none": "Без переопределения",
   "providers.noneDetail": "Сохранить вход, который уже есть у приложения",
   "providers.officialLogin": "Официальный вход",
@@ -347,6 +347,7 @@ export default {
   "pane.view.monitor": "Мониторинг системы",
   "pane.view.history": "История сессий",
   "pane.view.usage": "Расход агентов",
+  "pane.view.providers": "Провайдеры моделей",
   "pane.openInBrowser": "Открыть {url} в браузере",
   "pane.servedUrls": "Открыть порт, который обслуживает эта панель",
 
