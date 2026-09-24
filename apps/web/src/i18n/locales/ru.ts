@@ -392,6 +392,7 @@ export default {
   "about.checking": "Проверка…",
   "about.upToDate": "Установлена последняя версия ✓",
   "about.checkUpdates": "Проверить обновления",
+  "about.updateUnavailable": "Автоматические обновления для этой платформы пока недоступны",
   "about.downloading": "Загрузка…",
   "about.restarting": "Установлено — перезапуск…",
   "about.waitingForTasks": "Установлено — ожидание завершения запущенных задач: {count}…",

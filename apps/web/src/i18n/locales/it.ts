@@ -392,6 +392,7 @@ export default {
   "about.checking": "Controllo in corso…",
   "about.upToDate": "Tutto aggiornato ✓",
   "about.checkUpdates": "Cerca aggiornamenti",
+  "about.updateUnavailable": "Gli aggiornamenti automatici non sono ancora disponibili per questa piattaforma",
   "about.downloading": "Download in corso…",
   "about.restarting": "Installato: riavvio in corso…",
   "about.waitingForTasks": "Installato: in attesa che finiscano {count} attività in corso…",

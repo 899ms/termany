@@ -392,6 +392,7 @@ export default {
   "about.checking": "Memeriksa…",
   "about.upToDate": "Semua sudah terbaru ✓",
   "about.checkUpdates": "Periksa pembaruan",
+  "about.updateUnavailable": "Pembaruan otomatis belum tersedia untuk platform ini",
   "about.downloading": "Mengunduh…",
   "about.restarting": "Terpasang — memulai ulang…",
   "about.waitingForTasks": "Terpasang — menunggu {count} tugas yang berjalan selesai…",

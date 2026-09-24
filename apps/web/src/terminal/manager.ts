@@ -1,6 +1,7 @@
 import { WebSocketBackend, type ITerminalBackend } from "@termany/core";
 import { getLanguage, translate } from "../i18n";
 import { loadFontConfig } from "../font-config";
+import { CanvasAddon } from "@xterm/addon-canvas";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { WebglAddon } from "@xterm/addon-webgl";
@@ -34,6 +35,12 @@ import { forgetSessionUrls, noteSessionOutput } from "./servedUrls";
 import { registerWebLinks } from "./webLinks";
 import { fixWebkitGtkImeComposition } from "./webkitGtkIme";
 import { createGlyphAtlasRepairer, onAtlasPagesMerged } from "./glyphAtlas";
+import { isMacWebKit } from "./rendererPlatform";
+import {
+  defaultColorQueryMask,
+  filterDefaultColorReplies,
+  isCodexStartupDefaultColorProbe,
+} from "./defaultColorProbe";
 
 /**
  * The terminal session registry.
@@ -74,6 +81,11 @@ export interface Session {
   contentVersion: number;
   /** Set when this session's shell is an OpenSSH destination. */
   sshTarget?: string;
+  /** Recent PTY output used to recognize Codex's compact startup probe. */
+  defaultColorProbeTail: string;
+  /** OSC 10/11 replies withheld from a one-shot Codex palette probe. */
+  blockedDefaultColorReplies: number;
+  blockedDefaultColorRepliesUntil: number;
 }
 
 /**
@@ -1485,6 +1497,9 @@ function getSession(id: string, cwdFrom?: string[], sshTarget?: string, paneId =
     connectionState: sshTarget ? "connecting" : undefined,
     contentVersion: 0,
     sshTarget,
+    defaultColorProbeTail: "",
+    blockedDefaultColorReplies: 0,
+    blockedDefaultColorRepliesUntil: 0,
   };
   sessions.set(id, session);
   refreshOnSymbolsFontLoad();
@@ -1492,6 +1507,20 @@ function getSession(id: string, cwdFrom?: string[], sshTarget?: string, paneId =
 
   const wireBackend = (b: ITerminalBackend) => {
     b.onData((data) => {
+      const probeWindow = (session.defaultColorProbeTail + data).slice(-160);
+      const queryMask = defaultColorQueryMask(data);
+      if (
+        queryMask &&
+        (agentSessionKinds.get(id) === "codex" ||
+          isCodexStartupDefaultColorProbe(probeWindow))
+      ) {
+        // Codex caches this answer for the life of the TUI. Withholding it
+        // makes Codex render against terminal-default colors, which xterm can
+        // safely retint when Termany switches between dark and light themes.
+        session.blockedDefaultColorReplies |= queryMask;
+        session.blockedDefaultColorRepliesUntil = Date.now() + 1_000;
+      }
+      session.defaultColorProbeTail = probeWindow;
       if (sshTarget && session.connectionState !== "connected") {
         session.connectionState = "connected";
         notifyConnectionStatus();
@@ -1569,6 +1598,16 @@ function getSession(id: string, cwdFrom?: string[], sshTarget?: string, paneId =
 
   term.onData((data) => {
     if (IME_DEBUG) imeLog(`→PTY ${JSON.stringify(data)}`);
+    if (session.blockedDefaultColorReplies) {
+      if (Date.now() <= session.blockedDefaultColorRepliesUntil) {
+        const filtered = filterDefaultColorReplies(data, session.blockedDefaultColorReplies);
+        session.blockedDefaultColorReplies = filtered.pendingMask;
+        data = filtered.data;
+        if (!data) return;
+      } else {
+        session.blockedDefaultColorReplies = 0;
+      }
+    }
     if (sshTarget && session.ended) {
       if (/[\r\n]/.test(data)) {
         term.write("\r\n");
@@ -1676,22 +1715,6 @@ function getSession(id: string, cwdFrom?: string[], sshTarget?: string, paneId =
   );
 
   return session;
-}
-
-/**
- * True only inside macOS WKWebView/Safari. The IME workarounds below are
- * corrections for *that* engine's event ordering, and both are actively
- * harmful elsewhere. Linux Tauri renders through WebKitGTK, whose UA is also
- * "AppleWebKit … Safari" with no Chrome token — matching on the UA alone made
- * both fixes run there, where ibus/fcitx emit ordinary composition events and
- * xterm already handles the commit. The extra copy from the beforeinput hook
- * below is what users saw as every committed word arriving twice ("你好今天今天").
- */
-function isMacWebKit() {
-  const ua = navigator.userAgent;
-  const isPureWebKit = ua.includes("AppleWebKit") && !/Chrome|Chromium|Edg\//.test(ua);
-  const isMac = /Mac|iPhone|iPad/.test(navigator.platform) || ua.includes("Macintosh");
-  return isPureWebKit && isMac;
 }
 
 /**
@@ -1830,19 +1853,30 @@ export function attachSession(
   if (!s.opened) {
     s.term.open(s.el); // el is now in the document — renderer initialises correctly
     if (s.term.textarea) applyTextInputProps(s.term.textarea);
-    // GPU renderer: the default DOM renderer repaints character-by-character and
-    // makes echo feel laggy. WebGL must be loaded AFTER open(). If the GPU context
-    // is lost (driver reset / tab backgrounded), dispose so xterm falls back to DOM.
-    try {
-      const webgl = new WebglAddon();
-      webgl.onContextLoss(() => webgl.dispose());
-      // A page merge in the shared atlas rewrites glyph coordinates out from
-      // under every pane that isn't rendering right now, which is what makes
-      // text come back as the wrong characters until the pane is resized.
-      onAtlasPagesMerged(webgl, () => glyphAtlasRepairer.requestRepair());
-      s.term.loadAddon(webgl);
-    } catch {
-      /* no WebGL available — DOM renderer still works */
+    // macOS 26.5+ has a WKWebView/Safari WebGL regression that leaves old
+    // terminal frames composited over new ones. Canvas 2D is xterm's supported
+    // accelerated fallback and also clears transparent theme backgrounds
+    // correctly. Other engines keep the faster WebGL renderer.
+    if (isMacWebKit()) {
+      try {
+        s.term.loadAddon(new CanvasAddon());
+      } catch {
+        /* no Canvas 2D available — DOM renderer still works */
+      }
+    } else {
+      // WebGL must be loaded AFTER open(). If the GPU context is lost (driver
+      // reset / tab backgrounded), dispose so xterm falls back to DOM.
+      try {
+        const webgl = new WebglAddon();
+        webgl.onContextLoss(() => webgl.dispose());
+        // A page merge in the shared atlas rewrites glyph coordinates out from
+        // under every pane that isn't rendering right now, which is what makes
+        // text come back as the wrong characters until the pane is resized.
+        onAtlasPagesMerged(webgl, () => glyphAtlasRepairer.requestRepair());
+        s.term.loadAddon(webgl);
+      } catch {
+        /* no WebGL available — DOM renderer still works */
+      }
     }
     fixWebkitImeDirectInsert(s.term);
     fixAbandonedImeFinalize(s.term);

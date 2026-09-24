@@ -392,6 +392,7 @@ export default {
   "about.checking": "Comprobando…",
   "about.upToDate": "Todo está actualizado ✓",
   "about.checkUpdates": "Buscar actualizaciones",
+  "about.updateUnavailable": "Las actualizaciones automáticas aún no están disponibles para esta plataforma",
   "about.downloading": "Descargando…",
   "about.restarting": "Instalado: reiniciando…",
   "about.waitingForTasks": "Instalado: esperando a que terminen {count} tarea(s) en curso…",

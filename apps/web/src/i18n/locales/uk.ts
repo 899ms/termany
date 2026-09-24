@@ -393,6 +393,7 @@ export default {
   "about.checking": "Перевірка…",
   "about.upToDate": "Встановлено найновішу версію ✓",
   "about.checkUpdates": "Перевірити оновлення",
+  "about.updateUnavailable": "Автоматичні оновлення для цієї платформи поки недоступні",
   "about.downloading": "Завантаження…",
   "about.restarting": "Встановлено — перезапуск…",
   "about.waitingForTasks": "Встановлено — очікування завершення запущених завдань: {count}…",

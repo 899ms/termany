@@ -393,6 +393,7 @@ export default {
   "about.checking": "กำลังตรวจสอบ…",
   "about.upToDate": "เป็นเวอร์ชันล่าสุดแล้ว ✓",
   "about.checkUpdates": "ตรวจหาอัปเดต",
+  "about.updateUnavailable": "ยังไม่มีการอัปเดตอัตโนมัติสำหรับแพลตฟอร์มนี้",
   "about.downloading": "กำลังดาวน์โหลด…",
   "about.restarting": "ติดตั้งแล้ว — กำลังเริ่มใหม่…",
   "about.waitingForTasks": "ติดตั้งแล้ว — กำลังรองาน {count} รายการที่ทำงานอยู่ให้เสร็จ…",

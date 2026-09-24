@@ -392,6 +392,7 @@ export default {
   "about.checking": "Controleren…",
   "about.upToDate": "Alles is up-to-date ✓",
   "about.checkUpdates": "Controleren op updates",
+  "about.updateUnavailable": "Automatische updates zijn nog niet beschikbaar voor dit platform",
   "about.downloading": "Downloaden…",
   "about.restarting": "Geïnstalleerd — opnieuw starten…",
   "about.waitingForTasks": "Geïnstalleerd — wachten tot {count} lopende taken klaar zijn…",

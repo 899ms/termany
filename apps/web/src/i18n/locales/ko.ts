@@ -392,6 +392,7 @@ export default {
   "about.checking": "확인 중…",
   "about.upToDate": "최신 버전입니다 ✓",
   "about.checkUpdates": "업데이트 확인",
+  "about.updateUnavailable": "이 플랫폼에서는 아직 자동 업데이트를 사용할 수 없습니다",
   "about.downloading": "다운로드 중…",
   "about.restarting": "설치 완료 — 다시 시작하는 중…",
   "about.waitingForTasks": "설치 완료 — 실행 중인 작업 {count}개가 끝나기를 기다리는 중…",

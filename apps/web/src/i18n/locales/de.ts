@@ -394,6 +394,7 @@ export default {
   "about.checking": "Wird geprüft…",
   "about.upToDate": "Alles aktuell ✓",
   "about.checkUpdates": "Nach Updates suchen",
+  "about.updateUnavailable": "Automatische Updates sind für diese Plattform noch nicht verfügbar",
   "about.downloading": "Wird geladen…",
   "about.restarting": "Installiert – wird neu gestartet…",
   "about.waitingForTasks": "Installiert – warte auf das Ende von {count} laufenden Aufgabe(n)…",

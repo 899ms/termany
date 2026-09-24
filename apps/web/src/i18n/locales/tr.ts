@@ -392,6 +392,7 @@ export default {
   "about.checking": "Denetleniyor…",
   "about.upToDate": "Her şey güncel ✓",
   "about.checkUpdates": "Güncellemeleri denetle",
+  "about.updateUnavailable": "Otomatik güncellemeler henüz bu platformda kullanılamıyor",
   "about.downloading": "İndiriliyor…",
   "about.restarting": "Kuruldu — yeniden başlatılıyor…",
   "about.waitingForTasks": "Kuruldu — çalışan {count} görevin bitmesi bekleniyor…",

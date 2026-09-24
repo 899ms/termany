@@ -392,6 +392,7 @@ export default {
   "about.checking": "確認中…",
   "about.upToDate": "最新の状態です ✓",
   "about.checkUpdates": "アップデートを確認",
+  "about.updateUnavailable": "このプラットフォームでは自動更新をまだ利用できません",
   "about.downloading": "ダウンロード中…",
   "about.restarting": "インストール完了 — 再起動中…",
   "about.waitingForTasks": "インストール完了 — 実行中のタスク {count} 件の終了を待っています…",

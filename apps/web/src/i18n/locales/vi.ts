@@ -392,6 +392,7 @@ export default {
   "about.checking": "Đang kiểm tra…",
   "about.upToDate": "Bạn đang dùng bản mới nhất ✓",
   "about.checkUpdates": "Kiểm tra cập nhật",
+  "about.updateUnavailable": "Bản cập nhật tự động chưa khả dụng cho nền tảng này",
   "about.downloading": "Đang tải xuống…",
   "about.restarting": "Đã cài đặt — đang khởi động lại…",
   "about.waitingForTasks": "Đã cài đặt — đang đợi {count} tác vụ đang chạy kết thúc…",

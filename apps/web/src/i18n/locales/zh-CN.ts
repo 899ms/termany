@@ -391,6 +391,7 @@ export default {
   "about.checking": "检查中…",
   "about.upToDate": "已是最新版本 ✓",
   "about.checkUpdates": "检查更新",
+  "about.updateUnavailable": "此平台暂未提供自动更新",
   "about.downloading": "下载中…",
   "about.restarting": "安装完成 —— 正在重启…",
   "about.waitingForTasks": "安装完成 —— 正在等待 {count} 个运行中的任务结束…",

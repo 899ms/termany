@@ -392,6 +392,7 @@ export default {
   "about.checking": "Kontrollerar…",
   "about.upToDate": "Allt är uppdaterat ✓",
   "about.checkUpdates": "Sök efter uppdateringar",
+  "about.updateUnavailable": "Automatiska uppdateringar är inte tillgängliga för den här plattformen ännu",
   "about.downloading": "Hämtar…",
   "about.restarting": "Installerad — startar om…",
   "about.waitingForTasks": "Installerad — väntar på att {count} pågående uppgifter ska bli klara…",

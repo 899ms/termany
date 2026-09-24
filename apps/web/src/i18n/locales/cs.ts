@@ -393,6 +393,7 @@ export default {
   "about.checking": "Kontrola…",
   "about.upToDate": "Vše je aktuální ✓",
   "about.checkUpdates": "Zkontrolovat aktualizace",
+  "about.updateUnavailable": "Automatické aktualizace zatím nejsou pro tuto platformu dostupné",
   "about.downloading": "Stahování…",
   "about.restarting": "Nainstalováno — restartuje se…",
   "about.waitingForTasks": "Nainstalováno — čeká se na dokončení běžících úloh: {count}…",

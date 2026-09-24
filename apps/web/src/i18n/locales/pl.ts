@@ -393,6 +393,7 @@ export default {
   "about.checking": "Sprawdzanie…",
   "about.upToDate": "Wszystko aktualne ✓",
   "about.checkUpdates": "Sprawdź aktualizacje",
+  "about.updateUnavailable": "Automatyczne aktualizacje nie są jeszcze dostępne na tej platformie",
   "about.downloading": "Pobieranie…",
   "about.restarting": "Zainstalowano — ponowne uruchamianie…",
   "about.waitingForTasks": "Zainstalowano — czekanie na zakończenie uruchomionych zadań: {count}…",

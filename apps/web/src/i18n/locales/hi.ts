@@ -393,6 +393,7 @@ export default {
   "about.checking": "जाँच हो रही है…",
   "about.upToDate": "आप अद्यतन हैं ✓",
   "about.checkUpdates": "अपडेट देखें",
+  "about.updateUnavailable": "इस प्लेटफ़ॉर्म के लिए स्वचालित अपडेट अभी उपलब्ध नहीं हैं",
   "about.downloading": "डाउनलोड हो रहा है…",
   "about.restarting": "इंस्टॉल हो गया — फिर से शुरू हो रहा है…",
   "about.waitingForTasks": "इंस्टॉल हो गया — {count} चल रहे काम पूरे होने का इंतज़ार है…",
